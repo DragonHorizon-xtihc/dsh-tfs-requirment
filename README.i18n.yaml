@@ -1,0 +1,34 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write plugins/dsh-tfs-requirment/README.md
+/deepseek-ai-dsh-tfs-requirment:
+  en: ae46a1d1eb87b105
+  zh: 2a677622c3bea906
+/deepseek-ai-dsh-tfs-requirment/1-what-it-does-mapped-to-the-requirement-stories:
+  en: c127626ce3723774
+  zh: 14b2dcd71b03bb80
+/deepseek-ai-dsh-tfs-requirment/1-1-workbench-enhancements-spec-003-2026-09-20:
+  en: f1de2458ccdef2a5
+  zh: 27653b05c23df236
+/deepseek-ai-dsh-tfs-requirment/1-2-working-directory-and-the-completed-tab-spec-007-2026-09-21:
+  en: 5388f3609241d904
+  zh: 189f2009daf42d27
+/deepseek-ai-dsh-tfs-requirment/1-3-main-chat-panel-orchestrator-agent-shared-brief-spec-010-2026-09-30:
+  en: a3956b7ddc0c6f91
+  zh: be12cd1b54600aac
+/deepseek-ai-dsh-tfs-requirment/2-installation:
+  en: 915b7aced0b1ab1a
+  zh: c47055927e2700c0
+/deepseek-ai-dsh-tfs-requirment/3-how-to-pass-credentials-pat-in-the-step-most-likely-to-trip-you-up:
+  en: ad429727c2956846
+  zh: 4e3d7f813a89e5a2
+/deepseek-ai-dsh-tfs-requirment/4-configuration-keys-cordis-patch-yml-tfs-requirment-config:
+  en: f1bb5f2ed41290ec
+  zh: eccff26fb3175959
+/deepseek-ai-dsh-tfs-requirment/5-where-the-data-lands:
+  en: 5805161d409434ef
+  zh: ea93ecf63a2b45c5
+/deepseek-ai-dsh-tfs-requirment/6-development-and-gates:
+  en: 01ecf3dbf2df2e2d
+  zh: cd58a1975d96604e

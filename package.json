@@ -1,0 +1,81 @@
+{
+  "name": "@deepseek-ai/dsh-tfs-requirment",
+  "version": "0.1.0",
+  "description": "TFS 需求驱动的 DSH 任务看板插件：拉取 TFS 需求 → 拆解任务 → 指派角色智能体执行 → 回写 TFS（标签/状态/评论/关联）。全部直连 TFS REST；凭据走 profile 隔离；写操作过四道门禁。",
+  "type": "module",
+  "main": "lib/types/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/types/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/**/*.d.ts",
+    "lib/types/**/*.js",
+    "lib/types/**/*.d.ts",
+    "lib/client.js",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/cordis",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-store",
+        "react",
+        "react-dom"
+      ]
+    }
+  },
+  "scripts": {
+    "link": "node scripts/link-deps.mjs",
+    "prebuild": "node scripts/link-deps.mjs",
+    "build": "tsc -p tsconfig.host.json && tsc -p tsconfig.client.json && tsdown --config-loader tsx",
+    "build:host": "tsc -p tsconfig.host.json",
+    "build:client": "tsc -p tsconfig.client.json && tsdown --config-loader tsx",
+    "typecheck": "tsc --noEmit -p tsconfig.host.json && tsc --noEmit -p tsconfig.client.json && tsc -p tsconfig.tests.json",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "e2e:offline": "node ../../node_modules/tsx/dist/cli.mjs scripts/e2e-004.ts",
+    "e2e:live": "node scripts/e2e-004-live.mjs",
+    "e2e:tfs-link": "node ../../node_modules/tsx/dist/cli.mjs scripts/e2e-005.ts"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*",
+    "@deepseek-ai/dsh-settings": "*",
+    "@deepseek-ai/dsh-subagent": "*",
+    "@deepseek-ai/dsh-workflow": "*",
+    "@deepseek-ai/dsh-session": "*",
+    "@deepseek-ai/dsh-client-ui-slots": "*",
+    "@deepseek-ai/dsh-client-ui-primitives": "*",
+    "@deepseek-ai/dsh-client-store": "*",
+    "@deepseek-ai/dsh-agent-preset-registry": "*",
+    "@deepseek-ai/dsh-agent-presets": "*",
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "tsdown": "*"
+  },
+  "license": "MIT",
+  "private": true
+}

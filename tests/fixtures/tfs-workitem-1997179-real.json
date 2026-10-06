@@ -1,0 +1,38 @@
+{
+  "id": 1997179,
+  "title": "【联机设备不需要测试合代码】电测听设备连接winnex",
+  "type": "需求",
+  "state": "已分析",
+  "reason": "分析完成",
+  "priority": 3,
+  "severity": "",
+  "requirementType": "接口",
+  "discipline": "",
+  "moduleName": "",
+  "devLeader": "s_sy(宋舜尧) <WINNING\\s_sy>",
+  "testLeader": "tian_bin(田斌) <WINNING\\tian_bin>",
+  "prodLeader": "chen.jing(陈静) <WINNING\\chen.jing>",
+  "assignedTo": "zhangbo3(张波) <WINNING\\zhangbo3>",
+  "createdDate": "2026-08-04T08:13:02.01Z",
+  "changedDate": "2026-09-17T11:01:37.843Z",
+  "project": "体检管理",
+  "areaPath": "体检管理",
+  "description": "<div>【详细调研结果】</div>",
+  "demandAnalysis": "1 .背景",
+  "tags": "",
+  "iterationPath": "体检管理\\V6.0.2610.15.pec",
+  "url": "http://tfs2018-web.winning.com.cn:8080/tfs/WN_HIS/_apis/wit/workItems/1997179",
+  "relations": [
+    {
+      "rel": "System.LinkTypes.Hierarchy-Forward",
+      "url": "http://tfs2018-web.winning.com.cn:8080/tfs/WN_HIS/_apis/wit/workItems/2000143",
+      "attributes": { "isLocked": false }
+    },
+    {
+      "rel": "System.LinkTypes.Hierarchy-Forward",
+      "url": "http://tfs2018-web.winning.com.cn:8080/tfs/WN_HIS/_apis/wit/workItems/2021877",
+      "attributes": { "isLocked": false }
+    }
+  ],
+  "collection": "WN_HIS"
+}

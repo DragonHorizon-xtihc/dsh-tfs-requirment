@@ -1,0 +1,32 @@
+{
+  // 客户端半编译程序，输出到 lib/types/client/**。
+  //
+  // 与宿主半必须分开编译（沿用仓库既有约定）：两侧都会向 cordis 的 Context 做声明合并，
+  // 宿主合并 `settings`/`subagents`/`tools`，客户端合并 `slots`；混在一个程序里会让一侧的
+  // 服务增强"看得见"另一侧不存在的服务。
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2024", "ESNext.Disposable", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // 浏览器半不暴露 node 全局；types 置空以免 IDE 误提示 process/Buffer。
+    "types": [],
+    // 只做类型检查，不产出任何文件。客户端产物由 tsdown 打成 __ModuleLoader__ 闭包工厂。
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "src/shared/**/*.ts"],
+  "exclude": ["node_modules", "lib", "tests"]
+}

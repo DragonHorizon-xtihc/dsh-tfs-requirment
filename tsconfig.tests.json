@@ -1,0 +1,32 @@
+{
+  // 测试包的类型检查程序。
+  //
+  // 宿主/客户端两个程序都用 `rootDir: src` + 排除 tests（产物落到 lib/），因此测试文件
+  // 从不被 tsc 检查；而 vitest 走 esbuild 转译，同样不做类型检查。本程序把 src 与 tests
+  // 放在同一次检查里，专门用来锁住"测试与实现的类型一致性"。
+  //
+  // ⚠️ 与早期版本的两点差异（2026-09-19 修正，都因 `tests/takeover.spec.ts`）：
+  //   1. **不再 exclude `src/client`**：该 spec 要 import `src/client/takeover.ts`（纯 DOM 工具，
+  //      与 task-board/ssh 的中央列接管互斥协议）。原先排除它导致 spec 根本 import 不到。
+  //   2. **加 `"DOM"` lib 与 `"jsx"`**：client 半用 DOM API 与 JSX；spec 以
+  //      `// @vitest-environment jsdom` 运行。
+  //
+  // 为什么不用"把 takeover 下沉到 src/shared"这个更省事的办法：`src/shared` 被**宿主半**
+  // `tsconfig.host.json` 编译，而宿主半的 lib 里**没有 DOM**（它跑在 Node）⇒ 一移过去宿主半
+  // 立刻报 `TS2584: Cannot find name 'document'`。已实测验证，故保留在 client 半。
+  //
+  // 两道门禁的分工：宿主半守"`src/shared` 不许出现 DOM 依赖"，本程序守"测试与实现类型一致"。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "lib": ["ES2024", "ESNext.Disposable", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "lib"]
+}

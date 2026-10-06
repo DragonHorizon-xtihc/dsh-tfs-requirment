@@ -1,0 +1,35 @@
+# 依赖与构建产物
+node_modules/
+lib/
+*.tsbuildinfo
+
+# 凭据与环境（宪法 III：PAT 绝不进版本控制）
+.env.*
+.env
+# TFS 连接档案：含明文 PAT（profiles.json）与凭据导出文件（tfs-credentials.env）
+profiles.json
+profile-active.json
+tfs-credentials.env
+# 历史命名（REST 化前的 MCP 启动环境文件），保留以防本地残留文件被误提交
+tfs-mcp.env
+# 插件私有数据目录（DSH_DATA_DIR 缺省值）
+.tfs-requirment-data/
+
+# 插件私有数据（FR-031 / Principle VI：看板数据不进版本控制）
+board.json
+events.jsonl
+*.ai-board/
+
+# 日志与临时
+*.log
+.test-tmp*
+.DS_Store
+
+# 本地 AI 工具的产物与记忆：与插件源码无关，且含第三方脚本与二进制
+.vt*.json
+.fix-verify*.ts
+.vitest-reports/
+.workbuddy/
+.agent-teams/
+.specify/
+.dsh-file-drop/

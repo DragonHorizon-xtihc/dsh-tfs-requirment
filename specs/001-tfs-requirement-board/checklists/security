@@ -1,0 +1,41 @@
+# Security Requirements Quality Checklist: dsh-tfs-requirment
+
+**Purpose**: 校验安全相关需求（PAT 凭据、TFS 写门禁、审计、标签与回写）的**质量**，
+而非校验实现。本项目直接操作生产级 TFS 工作项且持有用户 PAT，安全是最高敏感面。
+**Created**: 2026-09-17 | **Feature**: `specs/001-tfs-requirement-board`
+**Sources**: 宪法 Principle II/III、spec.md（FR-001/002/013/014/015/016/017、Edge Cases）、plan.md（write-guard）
+
+---
+
+## Credential Protection（凭据保护）
+
+- [ ] CHK001 - PAT 的存储格式是否定义：gitignored profile 文件是否加密、还是明文落盘仅依赖 .gitignore 隔离？"密文"措辞需明确是否真加密。[Clarity, Spec FR-002/§2.A]
+- [ ] CHK002 - "测试连接"失败分类（认证失败/地址不可达/权限不足）是否保证不把 PAT 片段带入错误详情与日志？[Completeness, Spec §US1 AC3]
+- [ ] CHK003 - PAT 在传输至 tfs-mcp / 宿主 mcp-client 的链路中是否要求不出现在任何可观测面（进程参数、网络抓包、DSH 日志）？spec 仅约束"不明文回显/不写版本控制"。[Gap, Spec FR-002/FR-023]
+- [ ] CHK004 - 多 profile 场景下，切换/删除 profile 是否保证旧凭据从内存与磁盘彻底清除（非仅逻辑无效）？[Gap, Spec FR-002]
+
+## Write Safety Gate（写入安全门禁）
+
+- [ ] CHK005 - 四道门禁（dry-run→确认→幂等→审计，Principle II）是否对**所有** TFS 写路径强制（状态/评论/标签/关联），spec 是否逐类声明而非仅总体？[Completeness, Spec FR-015/§US4]
+- [ ] CHK006 - dry-run 预览是否覆盖"关联提交/PR/构建"这类复合写入，避免预览仅展示主变更而隐藏关联副作用？[Coverage, Spec FR-016]
+- [ ] CHK007 - 幂等键的生成规则是否定义且跨进程稳定（标签、状态回写、评论各自键空间），避免重启后重复写入？[Clarity, Spec FR-013/FR-015]
+- [ ] CHK008 - 确认步骤是否要求显式二次确认（非默认同意），且确认对象可精确到单条工作项+单字段变更？[Clarity, Spec FR-015]
+- [ ] CHK009 - revision 冲突（FR-017）中止后，是否禁止任何"自动重试覆盖"，强制人工重新 dry-run？[Consistency, Spec FR-017]
+
+## Audit & Traceability（审计与可追溯）
+
+- [ ] CHK010 - 审计日志是否定义为 append-only 且插件自身不可篡改/删除（防内部误清）？[Completeness, Spec FR-015]
+- [ ] CHK011 - 审计条目是否包含"操作者/时间/Profile 名（非 PAT）/工具/入参摘要/结果/幂等键"全字段，且确实剔除凭据？[Completeness, Spec FR-015/FR-002]
+- [ ] CHK012 - 审计日志是否覆盖"打标签"这类轻量写（不仅覆盖状态/评论），以满足 SC-005 幂等验证？[Coverage, Spec SC-005/FR-015]
+
+## Tag & Writeback Safety（标签与回写安全）
+
+- [ ] CHK013 - `dsh` 标签的规范化比较规则（大小写/空白/前缀）是否定义，防止同名异形标签绕过幂等？[Clarity, Spec Edge/FR-013]
+- [ ] CHK014 - 失败/取消/中断任务保留 `dsh` 标签时，是否同时记录"为何悬空"（避免无人跟进的中间态无归因）？[Gap, Spec FR-014/Edge]
+- [ ] CHK015 - 回写范围（状态/评论/标签/关联）是否要求按角色/按需求**可关闭单项**，避免误把内部中间态泄露到团队可见的 TFS 评论？[Clarity, Spec FR-016]
+
+## Threat Surface & Dependencies（威胁面与依赖）
+
+- [ ] CHK016 - tfs-mcp 作为唯一 TFS 出口（FR-004），其自身安全假设（不可被本地伪造 server 替换）是否列入威胁面？[Dependency, Gap, Spec FR-004]
+- [ ] CHK017 - 插件加载 `cordis.patch.yml` 声明 tfs-mcp server 实例时，serverName 唯一性失败（plan 引用 :169-172 报错）是否定义为配置期硬错误而非静默？[Consistency, Spec Plan §集成点]
+- [ ] CHK018 - 定时轮询（FR-024）是否定义对 TFS 的调用频率上限，避免高频轮询构成对本地 TFS 的拒绝服务？[Non-Functional, Gap, Spec FR-024]

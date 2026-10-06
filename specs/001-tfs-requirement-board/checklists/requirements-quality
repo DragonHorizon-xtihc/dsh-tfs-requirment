@@ -1,0 +1,75 @@
+# Requirements Quality Checklist: dsh-tfs-requirment
+
+**Purpose**: 校验 spec.md / plan.md 的**需求质量**（完整性、清晰度、一致性、可度量性、场景与边界覆盖），
+而非校验实现。作为后续 implement 的"需求单元测试"。
+**Created**: 2026-09-17 | **Feature**: `specs/001-tfs-requirement-board`
+**Sources**: spec.md（FR-001~031、SC-001~009、边界场景、实体、Resolved Clarifications）、plan.md、宪法 v1.1.0
+
+---
+
+## Requirement Completeness（完整性）
+
+- [ ] CHK001 - 是否定义了「需求领取/同步」的去重键（FR-007 仅声明"幂等"但未给出具体键：工作项 ID？ID+集合？）？[Clarity, Spec FR-007]
+- [ ] CHK002 - 多集合/多项目并存时，`board.json` 是否按集合或项目分片存储？spec 仅声明"存插件私有目录"（FR-031），未说明分片策略。[Gap, Spec FR-025/FR-031]
+- [ ] CHK003 - 审计日志（FR-015/FR-002）的**存储位置与保留期限**是否定义？目前只有"结构化记录"无留存策略。[Gap, Spec FR-015]
+- [ ] CHK004 - 多 profile（多个 TFS 凭据）切换的需求是否定义？spec 仅隐含单 profile 流程。[Gap, Spec FR-001/FR-002]
+- [ ] CHK005 - 角色智能体的"是否自动执行"开关（用户原始需求 §1.2）在 FR-027 中未体现，是否遗漏或并入映射？[Gap, Spec FR-027]
+- [ ] CHK006 - 可访问性（a11y）要求是否对看板 UI / 设置页 / 执行对话界面定义？[Coverage, Gap, Spec FR-028/FR-030]
+
+## Requirement Clarity（清晰度）
+
+- [ ] CHK007 - 「dsh 标签失败也保留」与"需求被放弃/删除"的关系是否定义？失败时保留、但用户主动移除时是否清标签未说明。[Clarity, Spec FR-014]
+- [ ] CHK008 - 写门禁的 dry-run「确认」交互形态是否明确：是 UI 弹窗预览、还是命令行确认？spec 只说"展示预览"未定义确认载体。[Clarity, Spec FR-015]
+- [ ] CHK009 - 「并发上限 3、超限排队」的排队顺序与可见性是否定义（FIFO？按入队时间？用户能否在队列中重排）？[Clarity, Spec FR-029]
+- [ ] CHK010 - 「断点重试」（US3 AC4）的"可恢复断点"如何界定：按子任务粒度？按工具调用粒度？[Clarity, Spec §US3]
+- [ ] CHK011 - TFVC「关联」到 TFS 工作项的方式是否定义：是写评论链接、还是填特定字段、还是 shelveset/branch 关联？[Clarity, Gap, Spec FR-026]
+- [ ] CHK012 - 定时轮询"增量更新"的增量判定基准是否定义（按 updatedTime？按 revision？本地最后同步游标？）？[Clarity, Spec FR-024]
+- [ ] CHK013 - 「角色智能体映射到宿主 preset/provider」中，当引用的 provider/preset 在宿主不存在时行为是否定义（报错/降级/禁用）？[Clarity, Spec FR-027]
+
+## Requirement Consistency（一致性）
+
+- [ ] CHK014 - 「每需求独立对话界面」（FR-030）与「跨 session 恢复状态」（SC-007）是否一致：对话关闭后需求状态从何处恢复？是否依赖 plan 的"JSON 权威 + 可选 session 镜像"机制？[Consistency, Spec FR-030/SC-007]
+- [ ] CHK015 - 定时轮询与手动刷新/用户编辑并发时，是否定义了冲突解决（轮询覆盖用户未保存编辑？）？[Consistency, Spec FR-024]
+- [ ] CHK016 - US4 AC2「进入执行队列即打标签」与 SC-005「重复发起不产生重复标签」是否自洽：同一需求多次发起执行，标签幂等键是否跨越多次执行稳定？[Consistency, Spec §US4/SC-005]
+- [ ] CHK017 - 宪法 Principle VI（JSON 权威）与宿主事实 2.D（todo/agent-team 状态存 session 投影）的"双写边界"在 spec 中是否明确为"JSON 为准、投影为只读镜像"，避免读回覆盖？[Consistency, Spec Assumptions/Plan §数据流]
+
+## Acceptance Criteria Quality（可度量性）
+
+- [ ] CHK018 - SC-001「全仓检索无法找到 PAT 明文」是否给出可执行的验证手段（grep 范围？构建产物是否排除？）？[Measurability, Spec SC-001]
+- [ ] CHK019 - SC-005「重复发起不产生重复标签」是否定义了"重复"的判定窗口与判定键？[Measurability, Spec SC-005]
+- [ ] CHK020 - SC-008「覆盖率 100%」的度量口径是否定义（审计条目数/写调用数 == 1？部分失败写如何计）？[Measurability, Spec SC-008]
+- [ ] CHK021 - SC-007「逐字段一致」是否定义比对方法（JSON 字段级 diff？人工？自动化断言）？[Measurability, Spec SC-007]
+
+## Scenario Coverage（场景覆盖）
+
+- [ ] CHK022 - 是否定义了"零状态"场景：需求池为空、未配置任何集合时的界面与引导？[Coverage, Edge Case]
+- [ ] CHK023 - 是否定义了"部分字段拉取失败"场景：TFS 返回某需求字段缺失/权限不足时的降级？[Coverage, Exception Flow]
+- [ ] CHK024 - 是否定义了回写时的 revision 冲突恢复流（FR-017「中止并要求重新 dry-run」之后用户如何继续）？[Coverage, Recovery]
+- [ ] CHK025 - 是否定义了执行过程中宿主/插件崩溃的恢复流：重启后正在执行的任务状态如何对账（本地 JSON vs TFS 实际标签/状态）？[Coverage, Recovery, Gap]
+- [ ] CHK026 - 是否定义了并发执行达上限时新需求的排队可见流（与 CHK009 对应）？[Coverage, Spec FR-029]
+- [ ] CHK027 - 是否定义了角色智能体被任务引用时的删除保护流（US5 AC3 仅说"阻止或确认"，未选其一）？[Coverage, Spec §US5]
+
+## Edge Case Coverage（边界）
+
+- [ ] CHK028 - PAT 过期/被回收后的刷新与重认证流是否定义（目前仅"界面提示失效"）？[Edge Case, Spec Edge/FR-001]
+- [ ] CHK029 - 目标工作项状态机不支持目标态（如需求不可直接置"已完成"）时，dry-run 拦截后的可选项是否定义？[Edge Case, Spec Edge]
+- [ ] CHK030 - 标签大小写/空白差异的幂等归一并规范规则是否定义（spec Edge 仅提及"规范化后判定"但未给规则）？[Edge Case, Spec Edge]
+- [ ] CHK031 - 半写状态：`board.json` 写入中途崩溃时，`events.jsonl` 与主数据如何对齐（spec Edge 仅说"检测并对齐"）？[Edge Case, Spec Edge/FR-020]
+
+## Non-Functional Requirements（非功能）
+
+- [ ] CHK032 - 性能目标是否量化：轮询 5 分钟是默认值但"单用户"外的延迟/吞吐目标未给（如刷新 100 条需求的上限时长）？[Clarity, NFR, Spec FR-024/Technical Context]
+- [ ] CHK033 - 安全非功能：审计日志防篡改（append-only、不得被插件自身删改）是否作为要求定义？[Completeness, Spec FR-015]
+- [ ] CHK034 - 可观测性：任务执行失败时的错误归因要求（区分配置错/凭据错/网络错/模型错）是否定义？[Gap, Spec §US3]
+
+## Dependencies & Assumptions（依赖与假设）
+
+- [ ] CHK035 - 假设"目标 TFS 2018 本地部署"是否经实测确认并记为非易变事实（已实测，但 TFS 升级到 Services 的兼容假设是否说明）？[Assumption, Spec Assumptions/§2.E]
+- [ ] CHK036 - 依赖"tfs-mcp 已连接且工具可用"是否定义为运行前置（缺失时的安装/引导要求）？[Dependency, Gap, Spec FR-004]
+- [ ] CHK037 - 依赖"DSH 宿主版本"是否声明最低兼容版本（因复用 `installSection`/`slot-catalog`/subagents 等 API，宿主升级风险已在 plan 标注）？[Dependency, Spec Plan §风险1]
+
+## Ambiguities & Conflicts（歧义与冲突）
+
+- [ ] CHK038 - "完全和 DSH 目前任务看板一致"在事实核查后已改为"借鉴 TeamTaskBoard 模型自实现"，spec 中是否全文消除了"照搬某看板插件"的歧义表述？[Ambiguity, Spec Resolved Clarifications/Plan §风险1]
+- [ ] CHK039 - shelveset 工具缺失（plan 风险项 2）是否已在 spec FR-026 中用"以实际工具为准/降级"明确，而非隐藏为未决？[Conflict, Spec FR-026]
+- [ ] CHK040 - "角色智能体"术语在 spec 中同时作为"映射宿主 preset"与"可 CRUD 配置"（US5）的对象，二者边界（配置项 vs 宿主实体）是否清晰不混？[Ambiguity, Spec FR-027/§US5]

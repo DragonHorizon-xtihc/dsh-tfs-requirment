@@ -1,0 +1,1199 @@
+{
+  "targetWorkItem": "—",
+  "collection": "WN_HIS",
+  "roles": [
+    {
+      "id": "role-architect",
+      "name": "架构师",
+      "description": "需求拆解与方案设计",
+      "provider": "spawn",
+      "defaultModel": "doubao-seed-2.1-turbo",
+      "defaultMcp": [
+        "tfs-mcp"
+      ],
+      "defaultSkills": [
+        "brainstorming",
+        "tjgl-code-standards",
+        "5x-table-relations"
+      ],
+      "autoExecute": false,
+      "tagStrategy": "dsh",
+      "preset": "standard-antiguess",
+      "defaultModelProvider": "arkcode"
+    },
+    {
+      "id": "role-coder",
+      "name": "开发工程师",
+      "description": "按方案编写与自测代码",
+      "provider": "spawn",
+      "defaultModel": "doubao-seed-2.1-turbo",
+      "defaultMcp": [
+        "code-graph-rag",
+        "tfs-mcp",
+        "understand-anything",
+        "winex_peis_knowledge",
+        "fast-context"
+      ],
+      "defaultSkills": [
+        "tjgl-code-standards",
+        "5x-table-relations"
+      ],
+      "autoExecute": true,
+      "tagStrategy": "dsh",
+      "preset": "standard-antiguess",
+      "defaultModelProvider": "arkcode"
+    },
+    {
+      "id": "role-qa",
+      "name": "测试工程师",
+      "description": "用例设计与回归验证",
+      "provider": "spawn",
+      "defaultModel": "doubao-seed-2.1-turbo",
+      "defaultMcp": [
+        "code-graph-rag",
+        "understand-anything",
+        "winex_peis_knowledge"
+      ],
+      "defaultSkills": [
+        "writing-plans"
+      ],
+      "autoExecute": true,
+      "tagStrategy": "dsh",
+      "preset": "standard-antiguess",
+      "defaultModelProvider": "arkcode"
+    },
+    {
+      "id": "role-product",
+      "name": "产品工程师",
+      "description": "分析需求的合理性、设计模块、以及可能的设计的业务",
+      "provider": "spawn",
+      "defaultModel": "doubao-seed-2.1-turbo",
+      "defaultMcp": [
+        "code-graph-rag",
+        "ragflow",
+        "tfs-mcp",
+        "understand-anything",
+        "winex_peis_knowledge"
+      ],
+      "defaultSkills": [
+        "brainstorming",
+        "tjgl-code-standards",
+        "5x-table-relations"
+      ],
+      "autoExecute": true,
+      "tagStrategy": "dsh",
+      "preset": "standard-antiguess",
+      "defaultModelProvider": "arkcode"
+    },
+    {
+      "id": "role-general",
+      "name": "通用工程师",
+      "description": "通用型工程师：承担未匹配到专门角色的通用任务（分析/实现/验证均可承担）",
+      "provider": "spawn",
+      "defaultModel": "doubao-seed-2.1-turbo",
+      "defaultSkills": [],
+      "autoExecute": false,
+      "tagStrategy": "dsh",
+      "preset": "standard-antiguess",
+      "defaultMcp": [
+        "code-graph-rag",
+        "ragflow",
+        "tfs-mcp",
+        "understand-anything",
+        "winex_peis_knowledge"
+      ],
+      "defaultModelProvider": "arkcode"
+    },
+    {
+      "id": "role-analyst",
+      "name": "需求分析师",
+      "description": "需求梳理、验收点与依赖分析",
+      "provider": "spawn",
+      "defaultModel": "doubao-seed-2.1-turbo",
+      "defaultSkills": [
+        "5x-table-relations",
+        "brainstorming"
+      ],
+      "autoExecute": false,
+      "tagStrategy": "dsh",
+      "defaultMcp": [
+        "code-graph-rag",
+        "tfs-mcp",
+        "understand-anything",
+        "winex_peis_knowledge",
+        "ragflow"
+      ],
+      "preset": "minimal",
+      "defaultModelProvider": "arkcode"
+    },
+    {
+      "id": "role-reviewer",
+      "name": "代码审核工程师",
+      "description": "代码审核：缺陷、风险与规范符合性检查",
+      "provider": "spawn",
+      "defaultModel": "doubao-seed-2.1-turbo",
+      "defaultSkills": [
+        "5x-table-relations",
+        "tjgl-code-standards"
+      ],
+      "autoExecute": false,
+      "tagStrategy": "dsh",
+      "preset": "minimal",
+      "defaultMcp": [
+        "code-graph-rag",
+        "ragflow",
+        "understand-anything",
+        "winex_peis_knowledge",
+        "tfs-mcp"
+      ],
+      "defaultModelProvider": "arkcode"
+    }
+  ],
+  "models": [
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "deepseek-v4-flash-vision-exp"
+  ],
+  "mcpServers": [],
+  "skills": [
+    "5x-table-relations",
+    "backend-patterns",
+    "brainstorming",
+    "bun-runtime",
+    "ccg-skills",
+    "codex-design",
+    "coding-standards",
+    "cordis-plugin-development",
+    "csharp-decompiler",
+    "csharp-msbuild",
+    "docx",
+    "docx2txt",
+    "editing-cordis-compositions",
+    "ego-browser",
+    "everything-codex-conventions",
+    "exam-develop-description",
+    "find-skills",
+    "frontend-design",
+    "frontend-patterns",
+    "gstack",
+    "guizang-ppt-skill",
+    "karpathy-guidelines",
+    "local-wiki-knowledge-creator",
+    "opencli-browser",
+    "pdf",
+    "peis-device-autoconfig",
+    "peis-mixplugin-dev",
+    "peis-report-autocollection",
+    "save-money",
+    "skill-creator",
+    "smart-search",
+    "source-command-aside",
+    "source-command-ccg-clean-branches",
+    "source-command-ccg-commit",
+    "source-command-ccg-context",
+    "source-command-ccg-rollback",
+    "source-command-ccg-worktree",
+    "source-command-cpp-build",
+    "source-command-cpp-review",
+    "source-command-cpp-test",
+    "source-command-evolve",
+    "source-command-feature-dev",
+    "source-command-flutter-build",
+    "source-command-flutter-review",
+    "source-command-flutter-test",
+    "source-command-go-build",
+    "source-command-go-review",
+    "source-command-gradle-build",
+    "source-command-hookify",
+    "source-command-hookify-configure",
+    "source-command-hookify-help",
+    "source-command-hookify-list",
+    "source-command-instinct-export",
+    "source-command-instinct-import",
+    "source-command-instinct-status",
+    "source-command-jira",
+    "source-command-kotlin-build",
+    "source-command-kotlin-test",
+    "source-command-learn-eval",
+    "source-command-plan",
+    "source-command-projects",
+    "source-command-promote",
+    "source-command-prune",
+    "source-command-python-review",
+    "source-command-resume-session",
+    "source-command-review-pr",
+    "source-command-rust-build",
+    "source-command-rust-review",
+    "source-command-save-session",
+    "source-command-setup-pm",
+    "source-command-skill-create",
+    "source-command-skill-health",
+    "speckit-analyze",
+    "speckit-checklist",
+    "speckit-clarify",
+    "speckit-compile",
+    "speckit-constitution",
+    "speckit-git-commit",
+    "speckit-git-feature",
+    "speckit-git-initialize",
+    "speckit-git-remote",
+    "speckit-git-validate",
+    "speckit-implement",
+    "speckit-plan",
+    "speckit-specify",
+    "speckit-tasks",
+    "speckit-taskstoissues",
+    "strategic-compact",
+    "tdd-workflow",
+    "tjgl-code-standards",
+    "using-superpowers",
+    "wn-tfs2018-integration",
+    "xlsx"
+  ],
+  "modelOptions": [
+    {
+      "provider": "deepseek-official",
+      "providerName": "DeepSeek",
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek-V4-Flash",
+      "description": "Fast, efficient, and economical; suited to focused, routine, or parallel tasks."
+    },
+    {
+      "provider": "deepseek-official",
+      "providerName": "DeepSeek",
+      "id": "deepseek-v4-pro",
+      "name": "DeepSeek-V4-Pro",
+      "description": "Stronger agentic coding, knowledge, and difficult reasoning; suited to complex or quality-critical tasks at higher cost."
+    },
+    {
+      "provider": "deepseek-official",
+      "providerName": "DeepSeek",
+      "id": "deepseek-v4-flash-vision-exp",
+      "name": "DeepSeek-V4-Flash-Vision-Exp"
+    }
+  ],
+  "workspaces": [
+    {
+      "id": "2a3ce477-e2e8-4e7e-a828-35aed9d00d34",
+      "title": "dsh-tfs-requirment",
+      "path": "D:\\ClaudeCode\\deepseek-harness\\plugins\\dsh-tfs-requirment"
+    },
+    {
+      "id": "f78d60cb-4bc7-434f-befd-f8361e7e0dba",
+      "title": "Winning.WINEX.TJGL.ReportPdf",
+      "path": "D:\\体检管理\\6.0\\03 源代码\\60混合框架\\GIT60混合框架\\Winning.WiNEX.Plugins\\Winning.WINEX.TJGL.ReportPdf"
+    },
+    {
+      "id": "2817c69f-a675-4195-9bad-6371cfafeeae",
+      "title": "Winning.WiNEX.PeisAsposeWords",
+      "path": "D:\\体检管理\\6.0\\03 源代码\\60混合框架\\GIT60混合框架\\Winning.WiNEX.Plugins\\Winning.WiNEX.PeisAsposeWords"
+    },
+    {
+      "id": "6dfabe62-e5b2-43ea-9f09-8fc73f90ea96",
+      "title": "winning-code",
+      "path": "D:\\WiNEX\\winning-code"
+    },
+    {
+      "id": "5d3e32bb-6ac7-4215-8647-244b40fd1aff",
+      "title": "慢病数据采集",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\77广西\\荔浦市人民医院\\慢病数据采集"
+    },
+    {
+      "id": "f980bd3a-45cb-4cba-ade4-846e5d1964c8",
+      "title": "Winning.WiNEX.WinSvr",
+      "path": "D:\\体检管理\\6.0\\03 源代码\\60混合框架\\GIT60混合框架\\Winning.WiNEX.Plugins\\Winning.WiNEX.WinSvr"
+    },
+    {
+      "id": "fab036c1-4af0-4a59-929d-d837f0533b23",
+      "title": "Winning.Tjgl.Web.UI.CommonAPI",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\57浙江\\新安国际\\V享体检接口\\代码\\Winning.Tjgl.Web.UI.CommonAPI"
+    },
+    {
+      "id": "fde49199-4602-4e06-ad6a-4a98d46ab1e5",
+      "title": "Winning.Tjgl.Interface.opeupload",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\55安徽\\宣城华信\\安徽职业病(河北网星软件)\\Winning.Tjgl.Interface.opeupload"
+    },
+    {
+      "id": "31d23481-130f-49b0-a18c-01a36035d13e",
+      "title": "体检管理-5.5.2308",
+      "path": "D:\\体检管理\\5.X\\版本迭代\\5.5.2308"
+    },
+    {
+      "id": "60550bd2-fd6b-4c36-8ab6-1b3f348bdc54",
+      "title": "河南职业病",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\71河南\\郑州人民医院\\代码\\河南职业病"
+    },
+    {
+      "id": "57f1fcb1-05c9-46fa-bedf-ede8790b51ac",
+      "title": "deepseek-harness",
+      "path": "D:\\ClaudeCode\\deepseek-harness"
+    },
+    {
+      "id": "ad5bf94f-cb50-4daf-bef4-c3c548011da7",
+      "title": "Winning.Tjgl.Extension.DeviceVistelEyewisdom",
+      "path": "D:\\体检管理\\5.X\\5.2\\代码\\Interface\\仪器接口\\Winning.Tjgl.Extension.DeviceVistelEyewisdom"
+    },
+    {
+      "id": "c2eacac1-3564-4913-96f7-3f84d76140bf",
+      "title": "Winning.Tjgl.UI.Summary",
+      "path": "D:\\体检管理\\5.X\\版本迭代\\5.5.2004\\代码\\UI\\Winning.Tjgl.UI.Summary"
+    },
+    {
+      "id": "67aabfb2-5b10-4093-b2cc-19f3016b6b1c",
+      "title": "Winning.WINEX.TJGL.ReportDesign",
+      "path": "D:\\体检管理\\6.0\\03 源代码\\60混合框架\\GIT60混合框架\\Winning.WiNEX.Plugins\\Winning.WINEX.TJGL.ReportPdf\\Winning.WINEX.TJGL.ReportDesign"
+    },
+    {
+      "id": "1671e598-35f6-4acd-93dc-abce6a380579",
+      "title": "TechMiniSvr",
+      "path": "D:\\WiNEX\\winning-code\\TechMiniSvr"
+    },
+    {
+      "id": "265f3d74-43e5-4dab-a183-b96a869e5d86",
+      "title": "每天健康",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\71河南\\郑州人民医院\\每天健康"
+    },
+    {
+      "id": "9c9f4f7c-a979-4141-a110-b2e8fb1de984",
+      "title": "Winning.Tjgl.Web.PluginVShare",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\57浙江\\新安国际\\V享体检接口\\代码\\Winning.Tjgl.Web.PluginVShare"
+    },
+    {
+      "id": "cf1d8a8c-a98f-46bc-a4a0-5e4f1d7f5ee5",
+      "title": "KillStartApplication",
+      "path": "D:\\TestCode\\KillStartApplication"
+    },
+    {
+      "id": "ce96a7ef-47bf-47fc-9204-dff2de64bb15",
+      "title": "新疆全民健康体检",
+      "path": "D:\\体检管理\\6.0\\03 源代码\\60混合框架\\GIT60混合框架\\Winning.WiNEX.Plugins\\新疆全民健康体检"
+    },
+    {
+      "id": "09c0a488-443c-4ed8-8fba-f61cf3cd8d21",
+      "title": "重庆体检肿瘤筛查接口",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\23重庆\\重庆体检肿瘤筛查接口"
+    },
+    {
+      "id": "908dd648-608e-4f76-885b-46f8b1efb9db",
+      "title": "黔西南州妇幼保健院",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\52贵州\\黔西南州妇幼保健院"
+    },
+    {
+      "id": "08834101-84ab-4cc3-8b55-2ec496bf3440",
+      "title": "dsh-cli-agents",
+      "path": "D:\\ClaudeCode\\deepseek-harness\\plugins\\dsh-cli-agents"
+    },
+    {
+      "id": "f94bdfcd-d935-4e43-93e4-e35f4817832e",
+      "title": "体检管理代码5.5.2016",
+      "path": "D:\\体检管理\\5.X\\版本迭代\\5.5.2106\\代码"
+    },
+    {
+      "id": "4c11385c-e65c-4d58-9106-6d650435fd7c",
+      "title": "体检管理公版代码",
+      "path": "D:\\体检管理\\5.X\\5.2\\代码"
+    },
+    {
+      "id": "ce9adbdb-2041-4a56-a9fd-be5add5d6983",
+      "title": "体检混合框架-dev",
+      "path": "D:\\体检管理\\6.0\\03 源代码\\60混合框架\\60混合框架-dev\\Winning.WiNEX.Plugins"
+    },
+    {
+      "id": "d53264d5-74ea-4dbd-8c61-c123d495d774",
+      "title": "天津总院",
+      "path": "D:\\体检管理\\5.X\\版本迭代\\5.0\\单独版\\13天津\\天津总医院现场处理版本\\Code"
+    },
+    {
+      "id": "4f5804c0-8146-4749-b3b7-10acf53717b0",
+      "title": "体检混合框架代码",
+      "path": "D:\\体检管理\\6.0\\03 源代码\\60混合框架\\GIT60混合框架\\Winning.WiNEX.Plugins"
+    },
+    {
+      "id": "85a14863-60f4-4546-ada3-613dc6809828",
+      "title": "cc-switch",
+      "path": "D:\\ClaudeCode\\cc-switch"
+    },
+    {
+      "id": "08395216-cede-4364-a5ce-fab24871a4fa",
+      "title": "代码",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\57浙江\\新安国际\\V享体检接口\\代码"
+    },
+    {
+      "id": "f4defe20-178f-409b-bdec-ae598b47b2a6",
+      "title": "cc-switch-rebuild",
+      "path": "D:\\ClaudeCode\\cc-switch-rebuild"
+    },
+    {
+      "id": "73a6e027-9270-46e0-8d2d-4180f8c3898a",
+      "title": "Desktop",
+      "path": "D:\\Desktop"
+    },
+    {
+      "id": "677760e1-dd34-4a83-8a3c-4c5b95925bea",
+      "title": "7a93e2d4-d03b-4075-99a8-2e5e45fa822c",
+      "path": "E:\\UserAgentData\\.paperclip\\instances\\default\\workspaces\\7a93e2d4-d03b-4075-99a8-2e5e45fa822c"
+    },
+    {
+      "id": "03f58b07-2cdf-4fc0-a709-ed3c59256298",
+      "title": "server",
+      "path": "D:\\ClaudeCode\\paperclip\\server"
+    },
+    {
+      "id": "069107c2-b5ba-4059-bf57-e06417626c24",
+      "title": "FastReport",
+      "path": "D:\\FastReports\\FastReport.Net\\Source\\FastReport"
+    },
+    {
+      "id": "92fa7c57-6e8b-49ce-b9a4-655039fa5a79",
+      "title": "FastReport",
+      "path": "D:\\ClaudeCode\\FastReport"
+    },
+    {
+      "id": "2b55219c-a35e-4830-8edd-b690f8f109c8",
+      "title": "useAnalysisDemo_vs2017",
+      "path": "D:\\体检管理\\5.X\\5.2\\项目文档\\53山东\\菏泽巨野县中医院\\设备联机\\电测听\\数据库对接(适用于V2.10及以上版本)\\测试数据解析接口\\useAnalysisDemo_vs2017"
+    },
+    {
+      "id": "f78e82e5-a9c7-49d3-b22b-ca8860158a74",
+      "title": "WiNEX",
+      "path": "D:\\WiNEX"
+    },
+    {
+      "id": "31dae7e4-9818-44de-87ff-457e5ae0d343",
+      "title": "new-chat-2",
+      "path": "C:\\Users\\user\\Documents\\Codex\\2026-05-18\\new-chat-2"
+    },
+    {
+      "id": "abc5e3ee-ee1a-4a9a-9d60-8e70ea1b5fd4",
+      "title": "New project",
+      "path": "C:\\Users\\user\\Documents\\New project"
+    }
+  ],
+  "presets": [
+    {
+      "id": "standard",
+      "name": "标准模式",
+      "description": "功能完整的编码 Agent，支持文件编辑、Shell、文件与网页检索、Skills、计划、目标、子代理和工作流。",
+      "isDefault": false
+    },
+    {
+      "id": "ptc",
+      "name": "PTC 模式",
+      "description": "功能完整的编码 Agent，但默认不提供 workflow 工具；其他工具通过 PTC 模式 SDK 呈现，让模型用一个 TypeScript 程序组合多步操作。",
+      "isDefault": false
+    },
+    {
+      "id": "minimal",
+      "name": "极简模式",
+      "description": "仅提供持久 bash 与 str_replace_editor 的双工具编码 Agent。",
+      "isDefault": false
+    },
+    {
+      "id": "cordis",
+      "name": "创造模式",
+      "description": "用于创建自定义 Agent preset：具备标准模式的全部能力，并提供运行时检查、插件实验和 preset 创作指导。",
+      "isDefault": false
+    },
+    {
+      "id": "data-agent",
+      "name": "数据模式",
+      "description": "连接数据库，用自然语言完成数据探索、SQL编写与业务分析。",
+      "isDefault": false
+    },
+    {
+      "id": "liangshen",
+      "name": "梁神模式",
+      "description": "那模式一启动，使用者当场双腿一软瘫坐在地，仿佛看见原子弹爆炸——三秒，三辈子的代码，外加文言文、二进制、摩斯电码三语解说轮番轰炸，凡人最后只能趴在地上用下巴磕出两个字:梁神！",
+      "isDefault": false
+    },
+    {
+      "id": "standard-antiguess",
+      "name": "Standard（反盲猜合约）",
+      "description": "功能完整的编码 Agent（同 standard），persona 内置「反盲猜工程行为合约」，并移植 liangshen 双阶段 bootstrap —— Phase 1 以持久 bash + str_replace_editor 锚定 Minimal 轨迹，晋升后切全套工具（PTC）；合约从 Phase 1 到晋升全程生效。",
+      "isDefault": false
+    }
+  ],
+  "providers": [
+    "fork",
+    "spawn"
+  ],
+  "skillOptions": [
+    {
+      "name": "5x-table-relations",
+      "description": "体检管理系统（Winning.Tjgl）数据库表结构与关系参考技能。\n提供 247 张表的完整字段定义、表关联关系、JOIN 模板、SQL 规范。\n触发场景：(1) 查询表结构或字段定义 (2) 编写 SQL/存储过程/视图/触发器 \n(3) 表关联查询或 JOIN 条件 (4) 数据库设计问题 (5) 生成实体类或 DTO \n(6) 体检管理系统数据模型相关问题 (7) 涉及 EXAM_TJRYK/EXAM_ZD/EXAM_TJXMK 等核心表\n",
+      "source": "user-dsh",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "backend-patterns",
+      "description": "Backend architecture patterns, API design, database optimization, and server-side best practices for Node.js, Express, and Next.js API routes.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "brainstorming",
+      "description": "在进行任何创意工作之前必须使用此技能——包括创建功能、构建组件、添加功能或修改行为。在实施之前探索用户意图、需求和设计。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "bun-runtime",
+      "description": "Bun as runtime, package manager, bundler, and test runner. When to choose Bun vs Node, migration notes, and Vercel support.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "ccg-skills",
+      "description": "CCG Skills - Quality gates, documentation generator, and multi-agent orchestration. Auto-installed by CCG workflow system.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": false
+    },
+    {
+      "name": "codex-design",
+      "description": "以HTML格式产出构思缜密、高保真度的设计产物，包括登陆页面、幻灯片、交互式原型、动画视频、海报、线框图和视觉探索方案。适用于用户提出设计、制作模型、原型构建、视觉化呈现、故事板创作或UI方案探索等需求的场景，例如“制作演示文稿”“设计登陆页面”“为该流程制作原型”“将此概念动画化”“将其转化为可点击模型”“展示X的多种方案”“创建宣传海报”“将此想法视觉化呈现”“我不确定想要何种风格”或“为<品牌>设计作品”等表述。在设计过程中，会先进行事实核查（通过网页搜索确认产品是否存在或其版本信息），在涉及品牌相关工作时遵循核心资产协议（将标志、产品照片和UI截图视为关键元素，而非仅关注颜色和字体），当需求过于模糊时，会启用设计方向顾问功能，从10种设计理念中提供3种差异化方向。同时，会预先确立视觉系统，提供多种设计变体，并避免AI设计常见的俗套手法（如过于夸张的渐变、表情符号项目符号、左侧带边框的圆角卡片、用CSS轮廓作为产品图片等）。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "coding-standards",
+      "description": "Baseline cross-project coding conventions for naming, readability, immutability, and code-quality review. Use detailed frontend or backend skills for framework-specific patterns.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "cordis-plugin-development",
+      "description": "Create, modify, debug, or extend dynamic Cordis Plugins, including Host Services and Events, Client Slot and theme UI, Package-private Client-to-Host calls, dynamic Tools, version updates, approval failures, and runtime diagnostics. Use this Skill to route a user request to the correct platform and Inspect Provider, then define, run, repair, or roll back the Plugin.",
+      "source": "custom",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "csharp-decompiler",
+      "description": "C#/.NET DLL 反编译技能。当用户要求反编译 DLL、反编译 .NET 程序集、查看 DLL 内容、分析 DLL、对比 DLL 与源码时，MUST 使用此技能。触发关键词：反编译、DLL、ildasm、IL代码、.NET程序集。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "csharp-msbuild",
+      "description": "使用 Visual Studio 2022 MSBuild 编译 C# 工程。当用户需要编译 .csproj 或 .sln 文件、修复 C# 编译错误、配置 .NET Framework 4.0 项目、或设置 C# 6.0 语言版本时使用此技能。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "docx",
+      "description": "当用户想要创建、读取、编辑或操作 Word 文档（.docx 文件）时使用此技能。触发条件包括：任何提及'Word 文档'、'.docx'的请求，或需要生成带有目录、标题、页码或信头等格式的专业文档。也适用于从 .docx 文件中提取或重组内容、在文档中插入或替换图片、在 Word 文件中执行查找替换、处理修订追踪或批注，或将内容转换为精美的 Word 文档。如果用户要求输出'报告'、'备忘录'、'信函'、'模板'或类似的 Word/.docx 文件，使用此技能。不适用于 PDF、电子表格、Google Docs 或与文档生成无关的一般编程任务。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "docx2txt",
+      "description": "Use this skill to extract text from Word documents (.docx) using Python docx2txt library. This is a lightweight, fast alternative to pandoc for simple text extraction tasks. Use when you need quick text extraction from docx files without complex formatting preservation. Triggers: 'extract text from docx', 'read docx with python', 'docx2txt', 'fast docx reading'.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "editing-cordis-compositions",
+      "description": "Use when creating, changing, or validating a Cordis composition for this harness — writing or editing an agent preset, adding or removing a plugin row, deciding whether something belongs to the host composition or to one session, checking whether a preset you authored actually mounts, or diagnosing a row that mounted but contributed nothing.",
+      "source": "custom",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "ego-browser",
+      "description": "When you need a browser, read this Skill by default. Use it to open and operate websites, fill forms, click buttons, take screenshots, extract page data, sign in, and perform other browser automation tasks, as well as web app testing, dogfooding, QA, bug investigation, and app-quality review. ego-browser (ego-lite) is a Chromium browser designed for both human users and AI Agents. Agents can use the user's logged-in websites and personal context to complete tasks and collaborate smoothly with the user through the browser interface. Therefore, prefer ego-browser over built-in browsers or other web tools.",
+      "source": "user-dsh",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "everything-codex-conventions",
+      "description": "Development conventions and patterns for everything-Codex. JavaScript project with conventional commits.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "exam-develop-description",
+      "description": "WiNEX 体检管理系统插件仓库（Winning.WiNEX.Plugins）开发技能。覆盖 WinSvr 调度服务、PeisPrinter 打印/设备插件、ReportPdf 报告导出的编译命令，DevExpress v14.1 WinForms 控件三步法（实例化/BeginInit/EndInit）、界面布局与级联下移规则、新增配置项贯穿 MySection 到 FileUploadHelper 的完整属性链路，以及常见错误预防。\n触发场景：(1) Winning.WiNEX.Plugins 仓库开发与编译 (2) WinSvr/PeisPrinter/ReportPdf 模块改动 (3) Designer.cs 中添加控件 (4) 新增配置项的属性链路排查 (5) Quartz 定时任务窗体调整。\n边界：主代码库分层规范（BLL/DAL/UI、SQL 参数化、异常处理）使用 tjgl-code-standards；数据库表结构与关联关系使用 winex-peis-table-relations 或 5xTableRelations。\n",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "find-skills",
+      "description": "当用户询问\"如何做 X\"、\"找一个 X 的技能\"、\"有没有能...的技能\"，或表达想要扩展能力时，帮助用户发现和安装代理技能。当用户寻找可能以可安装技能形式存在的功能时使用此技能。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "frontend-design",
+      "description": "Create distinctive, production-grade frontend interfaces with high design quality. Use when the user asks to build web components, pages, or applications and the visual direction matters as much as the code quality.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "frontend-patterns",
+      "description": "Frontend development patterns for React, Next.js, state management, performance optimization, and UI best practices.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "gstack",
+      "description": "Fast headless browser for QA testing and site dogfooding. Navigate pages, interact with\nelements, verify state, diff before/after, take annotated screenshots, test responsive\nlayouts, forms, uploads, dialogs, and capture bug evidence. Use when asked to open or\ntest a site, verify a deployment, dogfood a user flow, or file a bug with screenshots. (gstack)\n",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "guizang-ppt-skill",
+      "description": "生成\"电子杂志 × 电子墨水\"风格的横向翻页网页 PPT（单 HTML 文件），含 WebGL 流体背景、衬线标题 + 非衬线正文、章节幕封、数据大字报、图片网格等模板。当用户需要制作分享 / 演讲 / 发布会风格的网页 PPT，或提到\"杂志风 PPT\"、\"horizontal swipe deck\"、\"editorial magazine\"、\"e-ink presentation\"时使用。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "karpathy-guidelines",
+      "description": "减少常见 LLM 编程错误的行为指南。在编写、审查或重构代码时使用，以避免过度复杂化、进行精准修改、明确陈述假设并定义可验证的成功标准。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "local-wiki-knowledge-creator",
+      "description": "本地Wiki知识库管理工具，用于创建、维护和管理代码项目的本地Wiki文档。支持根据代码仓库自动生成结构化的知识库文档，包含功能点、业务实体、API接口等。Use when: (1) 创建新的项目知识库，(2) 更新现有知识库内容，(3) 分析代码仓库生成文档，(4) 管理Wiki版本，(5) 检索知识库中的功能点和业务场景。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "opencli-browser",
+      "description": "Use when an agent needs to drive a real Chrome window via opencli — inspect a page, fill forms, click through logged-in flows, or extract data ad-hoc. Covers the selector-first target contract, compound form fields, stale-ref handling, network capture, and the agent-native envelopes the CLI returns. Not for writing adapters — see opencli-adapter-author for that.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "pdf",
+      "description": "Comprehensive PDF manipulation toolkit for extracting text and tables, creating new PDFs, merging/splitting documents, and handling forms. When Codex needs to fill in a PDF form or programmatically process, generate, or analyze PDF documents at scale.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "peis-device-autoconfig",
+      "description": "WiNEX 体检 60 混合框架「体检设备联机」配置与动态解析代码的自动生成技能。根据用户输入的联机类型（COM 串口、SOCKET 网口、WEB 网页、DIRECT 直连）以及\"接收到的结果\"（粘贴的设备原始报文）或\"文件结果\"（上传的 .csv/.xml/.json/.gnd/.mdb/数据库结果文件），自动生成 DeviceConfig.xml 中的 <Device>/<Node> 配置片段，或 Config\\DynamicCode 下的动态解析 C# 代码文件。覆盖 COM、WEB、Direct、xml、json、电测听、本地数据库（Access/OleDB/SQLite）、服务端数据库（MySQL/SQLServer/Oracle）等全部联机类型。触发词：设备联机、联机配置、DeviceConfig、动态解析、动态代码、DynamicCode、DynamicConverter、串口/网口/网页/直连接数、报文解析、节点配置、电测听对接、Xeta/OTOsuite/Otometrics、设备结果文件、设备数据库取数、ReturnNow、设备接入。当用户要\"根据设备返回结果/结果文件生成联机配置或解析代码\"时必须加载。",
+      "source": "user-dsh",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "peis-mixplugin-dev",
+      "description": "WiNEX 体检 60 混合框架（Winning.WiNEX.Plugins，.NET Framework 4.7.2 C# 插件集合）的分析与开发专用技能。覆盖读卡器（ReadCard/HCE300）、体检设备驱动（COM/SOCKET/WEB/DIRECT/外部驱动 DLL/动态 C# 脚本）、桥接 Bridge、本地 HTTP/WebSocket 路由、报告打印与导出（PeisPrinter/PeisReport/FastReport 引擎/Aspose Words/Worker 进程）、独立宿主（PeisReportManager/PeisPrintProxy）、OWIN WebApi（ReportPdf）、Quartz 作业（WinSvr）以及新疆全民健康体检子解决方案。触发词：混合框架、Winning.WiNEX.Plugins、PeisPrinter、ReadCard、HCE300、PeisFastReport、PeisAsposeWords、读卡器驱动、设备驱动、DeviceConfig、Bridge 桥接、HttpRoute、trancode、报告打印、FastReport 模板、Word 导出、插件 DLL、体检设备对接。任何针对该仓库的代码分析、缺陷修复、新设备/新路由/新报表接入前必须加载。",
+      "source": "user-dsh",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "peis-report-autocollection",
+      "description": "WiNEX 体检 60 混合框架「定时/监听采集报告文件服务（WinSvr）」的采集配置自动生成技能。根据用户输入的采集信息（设备/项目/服务编码、报告类别、调度方式）、报告结果文件或其所在路径（.pdf/.jpg/.tiff 等附件，.csv/.txt/.xml/.json 等可解析文件）、或数据库连接相关内容（DBType、连接串、取数 SQL），自动在 Winning.WiNEX.TJGL.WinSvr.exe.config 的 <MySection> 中生成可直接落地的 <add> 作业配置（ReportFileJob 定时批量 / FileChangedWatchJob 文件监听），并正确设置 ParseMode（Local/Remote/LocalAndRemote/NoneAnalysis/DB）、体检编号来源（FileName/Content）、字段列映射与 DB 模板变量。触发词：定时采集、批量采集、监听采集、文件监控、报告采集、采集配置、WinSvr、ReportFileJob、FileChangedWatchJob、MySection、exe.config、FilesPath、FilesExtend、AnalysisFileExtend、ExamNoPattern、ReportClass、ParseMode、本地解析、服务端解析、数据库取报告、DBType、DBConnectionString、DBQueryScript、ENC 加密连接串、设备结果文件落盘、采集任务。当用户要\"根据设备结果文件/路径/数据库连接生成定时采集配置\"时必须加载。",
+      "source": "user-dsh",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "save-money",
+      "description": "自动检测任务复杂度，智能路由 Codex 模型（Haiku + Sonnet）。简单任务用 Haiku，复杂任务升级 Sonnet，节省 50% 以上的 API 费用。适用于 Codex 模型（Haiku + Sonnet），自动检测任务难度，简单用 Haiku，复杂升级 Sonnet，轻松省下 50% 以上的费用。— 规则：响应前先分类任务。如果符合升级触发条件，立即调用 sessions_spawn 并指定完整任务和模型 anthropic/Codex-sonnet-4-20250514。切勿自己回答复杂任务。升级场景：分析、对比、规划、策略、代码超过 10 行、报告、提案、多步推理、表格、大纲、图表、长文写作超过 3 段、总结、长篇翻译。Haiku 禁止：对比表格、代码超过 10 行、多步分析、报告、复杂推理。Haiku 适用：事实问答、定义、问候、提醒、简短查询、闲聊、1-2 句话任务。存疑时升级。Haiku 回复保持简洁。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "skill-creator",
+      "description": "创建有效技能的指南。当用户想要创建新技能（或更新现有技能）以扩展 Codex 能力，提供专业知识、工作流或工具集成时使用此技能。",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "smart-search",
+      "description": "基于 opencli 命令的智能搜索路由器。当用户想要使用 OpenCLI、CLI 或 API 搜索、查询、查找或研究信息时，尤其是涉及指定网站、社交媒体、技术资料、新闻、购物、旅游、求职、金融或中文内容时，务必使用此 skill",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-aside",
+      "description": "Answer a quick side question without interrupting or losing context from the current task. Resume work automatically after answering.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-ccg-clean-branches",
+      "description": "清理 Git 分支：安全清理已合并或过期分支，默认 dry-run 模式",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-ccg-commit",
+      "description": "智能 Git 提交：分析改动生成 Conventional Commit 信息，支持拆分建议",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-ccg-context",
+      "description": "项目上下文管理：初始化 .context 目录、记录决策日志、压缩归档、查看历史",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-ccg-rollback",
+      "description": "交互式 Git 回滚：安全回滚分支到历史版本，支持 reset/revert 模式",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-ccg-worktree",
+      "description": "管理 Git Worktree：在 ../.ccg/项目名/ 目录创建，支持 IDE 集成和内容迁移",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-cpp-build",
+      "description": "Fix C++ build errors, CMake issues, and linker problems incrementally. Invokes the cpp-build-resolver agent for minimal, surgical fixes.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-cpp-review",
+      "description": "Comprehensive C++ code review for memory safety, modern C++ idioms, concurrency, and security. Invokes the cpp-reviewer agent.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-cpp-test",
+      "description": "Enforce TDD workflow for C++. Write GoogleTest tests first, then implement. Verify coverage with gcov/lcov.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-evolve",
+      "description": "Analyze instincts and suggest or generate evolved structures",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-feature-dev",
+      "description": "Guided feature development with codebase understanding and architecture focus",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-flutter-build",
+      "description": "Fix Dart analyzer errors and Flutter build failures incrementally. Invokes the dart-build-resolver agent for minimal, surgical fixes.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-flutter-review",
+      "description": "Review Flutter/Dart code for idiomatic patterns, widget best practices, state management, performance, accessibility, and security. Invokes the flutter-reviewer agent.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-flutter-test",
+      "description": "Run Flutter/Dart tests, report failures, and incrementally fix test issues. Covers unit, widget, golden, and integration tests.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-go-build",
+      "description": "Fix Go build errors, go vet warnings, and linter issues incrementally. Invokes the go-build-resolver agent for minimal, surgical fixes.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-go-review",
+      "description": "Comprehensive Go code review for idiomatic patterns, concurrency safety, error handling, and security. Invokes the go-reviewer agent.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-gradle-build",
+      "description": "Fix Gradle build errors for Android and KMP projects",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-hookify",
+      "description": "Create hooks to prevent unwanted behaviors from conversation analysis or explicit instructions",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-hookify-configure",
+      "description": "Enable or disable hookify rules interactively",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-hookify-help",
+      "description": "Get help with the hookify system",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-hookify-list",
+      "description": "List all configured hookify rules",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-instinct-export",
+      "description": "Export instincts from project/global scope to a file",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-instinct-import",
+      "description": "Import instincts from file or URL into project/global scope",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-instinct-status",
+      "description": "Show learned instincts (project + global) with confidence",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-jira",
+      "description": "Retrieve a Jira ticket, analyze requirements, update status, or add comments. Uses the jira-integration skill and MCP or REST API.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-kotlin-build",
+      "description": "Fix Kotlin/Gradle build errors, compiler warnings, and dependency issues incrementally. Invokes the kotlin-build-resolver agent for minimal, surgical fixes.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-kotlin-test",
+      "description": "Enforce TDD workflow for Kotlin. Write Kotest tests first, then implement. Verify 80%+ coverage with Kover.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-learn-eval",
+      "description": "Extract reusable patterns from the session, self-evaluate quality before saving, and determine the right save location (Global vs Project).",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-plan",
+      "description": "Restate requirements, assess risks, and create step-by-step implementation plan. WAIT for user CONFIRM before touching any code.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-projects",
+      "description": "List known projects and their instinct statistics",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-promote",
+      "description": "Promote project-scoped instincts to global scope",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-prune",
+      "description": "Delete pending instincts older than 30 days that were never promoted",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-python-review",
+      "description": "Comprehensive Python code review for PEP 8 compliance, type hints, security, and Pythonic idioms. Invokes the python-reviewer agent.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-resume-session",
+      "description": "Load the most recent session file from ~/.Codex/session-data/ and resume work with full context from where the last session ended.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-review-pr",
+      "description": "Comprehensive PR review using specialized agents",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-rust-build",
+      "description": "Fix Rust build errors, borrow checker issues, and dependency problems incrementally. Invokes the rust-build-resolver agent for minimal, surgical fixes.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-rust-review",
+      "description": "Comprehensive Rust code review for ownership, lifetimes, error handling, unsafe usage, and idiomatic patterns. Invokes the rust-reviewer agent.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-save-session",
+      "description": "Save current session state to a dated file in ~/.Codex/session-data/ so work can be resumed in a future session with full context.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-setup-pm",
+      "description": "Configure your preferred package manager (npm/pnpm/yarn/bun)",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-skill-create",
+      "description": "Analyze local git history to extract coding patterns and generate SKILL.md files. Local version of the Skill Creator GitHub App.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "source-command-skill-health",
+      "description": "Show skill portfolio health dashboard with charts and analytics",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-analyze",
+      "description": "Perform a non-destructive cross-artifact consistency and quality analysis across spec.md, plan.md, and tasks.md after task generation.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-checklist",
+      "description": "Generate a custom checklist for the current feature based on user requirements.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-clarify",
+      "description": "Identify underspecified areas in the current feature spec by asking up to 5 highly targeted clarification questions and encoding answers back into the spec.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-compile",
+      "description": "Compile C# projects if they exist in the workspace. Skip if no C# projects found.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-constitution",
+      "description": "Create or update the project constitution from interactive or provided principle inputs, ensuring all dependent templates stay in sync.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-git-commit",
+      "description": "Auto-commit changes after a Spec Kit command completes",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-git-feature",
+      "description": "Create a feature branch with sequential or timestamp numbering",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-git-initialize",
+      "description": "Initialize a Git repository with an initial commit",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-git-remote",
+      "description": "Detect Git remote URL for GitHub integration",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-git-validate",
+      "description": "Validate current branch follows feature branch naming conventions",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-implement",
+      "description": "Execute the implementation plan by processing and executing all tasks defined in tasks.md",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-plan",
+      "description": "Execute the implementation planning workflow using the plan template to generate design artifacts.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-specify",
+      "description": "Create or update the feature specification from a natural language feature description.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-tasks",
+      "description": "Generate an actionable, dependency-ordered tasks.md for the feature based on available design artifacts.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "speckit-taskstoissues",
+      "description": "Convert existing tasks into actionable, dependency-ordered GitHub issues for the feature based on available design artifacts.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "strategic-compact",
+      "description": "Suggests manual context compaction at logical intervals to preserve context through task phases rather than arbitrary auto-compaction.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "tdd-workflow",
+      "description": "Use this skill when writing new features, fixing bugs, or refactoring code. Enforces test-driven development with 80%+ coverage including unit, integration, and E2E tests.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "tjgl-code-standards",
+      "description": "体检管理系统(Tjgl)代码规范检查与指导技能。\n覆盖 BLL/DAL/UI/Core/DataObject/Common/Interface/Setting 全部架构层，\n以及插件开发、定时任务、JSON组装、接口集成等场景。\n触发场景：\n(1) 体检系统 C# 代码规范检查与审查\n(2) BLL/DAL/UI 等架构层代码模板生成\n(3) 插件开发（IFormPlugin）指导\n(4) 定时任务开发规范\n(5) 数据库访问模式审查（IAdoDb/EF禁用规则）\n(6) JSON组装规范（JObject/JArray）\n(7) 外部系统集成（接口适配器模式）\n(8) 编译错误诊断与修复\n",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "using-superpowers",
+      "description": "在开始任何对话时使用 —— 确立如何查找和使用技能，要求在任何响应（包括澄清问题）之前调用 Skill 工具",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "wn-tfs2018-integration",
+      "description": "TFS 2018 集成技能：工作项管理与代码提交检查（卫宁健康 WN_HIS 团队项目）",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    },
+    {
+      "name": "xlsx",
+      "description": "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .csv, or .tsv file (e.g., adding columns, computing formulas, formatting, charting, cleaning messy data); create a new spreadsheet from scratch or from other data sources; or convert between tabular file formats. Trigger especially when the user references a spreadsheet file by name or path — even casually (like \"the xlsx in my downloads\") — and wants something done to it or produced from it. Also trigger for cleaning or restructuring messy tabular data files (malformed rows, misplaced headers, junk data) into proper spreadsheets. The deliverable must be a spreadsheet file. Do NOT trigger when the primary deliverable is a Word document, HTML report, standalone Python script, database pipeline, or Google Sheets API integration, even if tabular data is involved.",
+      "source": "user-agents",
+      "modelInvocable": true,
+      "userInvocable": true
+    }
+  ],
+  "tagSuggestions": [
+    "dsh",
+    "tfs-requirment",
+    "auto"
+  ],
+  "collections": [
+    "WN_HIS"
+  ],
+  "pollIntervalMinutes": 5,
+  "dispatchConcurrency": 3,
+  "catalogWarnings": [
+    "技能目录：预设「data-agent」standing 作用域不可用（agent-presets: preset \"data-agent\" failed to mount: failed to apply loader entry persona (@deepseek-ai/dsh-persona): invalid config:\n  - $.text missing required value (at text) (C:\\Users\\user\\.dsh\\.agent-presets\\data-agent\\agent.cordis.yml)），已跳过该预设",
+    "技能目录：预设「liangshen」standing 作用域不可用（agent-presets: preset \"liangshen\" failed to mount: failed to apply loader entry persona (@deepseek-ai/dsh-persona): invalid config:\n  - $.text missing required value (at text) (C:\\Users\\user\\.dsh\\.agent-presets\\liangshen\\agent.cordis.yml)），已跳过该预设",
+    "技能目录：预设「standard-antiguess」standing 作用域不可用（agent-presets: preset \"standard-antiguess\" failed to mount: failed to apply loader entry persona (@deepseek-ai/dsh-persona): invalid config:\n  - $.text missing required value (at text) (C:\\Users\\user\\.dsh\\.agent-presets\\standard-antiguess\\agent.cordis.yml)），已跳过该预设",
+    "技能目录：preset 挂载模块全部候选不可读——「@deepseek-ai/dsh-agent-preset-registry」不可读（Cannot find package '@deepseek-ai/dsh-agent-preset-registry' imported from D:\\ClaudeCode\\deepseek-harness\\plugins\\dsh-tfs-requirment\\lib\\types\\host\\dsh-catalog.js）；「@deepseek-ai/dsh-agent-presets」不可读（Cannot find package '@deepseek-ai/dsh-agent-presets' imported from D:\\ClaudeCode\\deepseek-harness\\plugins\\dsh-tfs-requirment\\lib\\types\\host\\dsh-catalog.js），仅回退服务层作用域",
+    "MCP 目录为空：既无已注册的 mcp__* 工具，也无配置兜底清单"
+  ],
+  "catalogCollectedAt": "2026-10-04T16:43:21.186Z",
+  "orchestration": {
+    "available": true,
+    "providers": [
+      "spawn",
+      "fork"
+    ]
+  },
+  "tfsBaseUrl": "http://tfs2018-web.winning.com.cn:8080/tfs"
+}

@@ -1,0 +1,40 @@
+{
+  // 宿主半编译程序（默认工程，IDE 与 `tsc -p tsconfig.host.json` 共用）。
+  //
+  // 刻意不 extends 仓库根的 tsconfig.base.json：那份基座用 `paths` 把 @deepseek-ai/* 指到
+  // ../../packages/**/src 的源码并要求 composite + 项目引用。本插件不在 pnpm workspace 内，
+  // 套用那份基座会因 rootDir 之外的源码产生"不在 rootDir 下"的错误（先例 dsh-cli-agents 踩过）。
+  //
+  // 因此改用构建产物的 .d.ts 面做类型检查，与运行期实际加载的 lib/index.js 完全一致
+  // （依赖由仓库根 node_modules 解析，已验证可直达 @deepseek-ai/*）。
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2024", "ESNext.Disposable"],
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/client", "node_modules", "lib", "tests"]
+}

@@ -1,0 +1,57 @@
+# @deepseek-ai/dsh-tfs-requirment bundle patch
+#
+# 把一个 loader 行插入 web profile 的插件名册。
+# （package.json 的 `dsh.bundle.patch` 指向本文件；宿主在 `packages/boot/app-boot/src/profile.ts:879`
+#  读取 `bundleManifest.dsh.bundle.patch` 应用本 patch。）
+#
+# 安装（与仓库先例 @deepseek-ai/dsh-optimized-prompt / @deepseek-ai/dsh-cli-agents 一致）：
+#   1. $DSH_HOME/profiles/web/package.json 的 dependencies 加本插件（link:<绝对路径>）
+#   2. 同文件 dsh.profile.bundles 数组加入 "@deepseek-ai/dsh-tfs-requirment"
+#   3. dsh plugin add 建立 node_modules 软链
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-09-19 REST 化：**不再声明 tfs-mcp server 实例**
+#
+# 旧版本这里有一段 `- id: tfs-mcp / name: '@deepseek-ai/dsh-mcp-client'`，用于把
+# tfs-mcp 子进程接进宿主，插件再经 `ctx.tools.execute('mcp__tfs-mcp__*')` 调它。
+# 该设计已整体废除，因为它有若干绕不开的缺陷：
+#
+#   1. **凭据必须写进配置文件**：dsh-mcp-client 用 `scrubbedParentEnv()` 清洗子进程环境
+#      （丢 `KEY|PASSWORD|SECRET|TOKEN` 与全部 `DSH_*`），故 URL/PAT 只能经本文件的
+#      `env` 做 `!!js process.env.*` 声明，而 `!!js` 在**配置解析期**求值 ⇒ 插件无法
+#      在运行期注入凭据，「连接与凭据」页改了 PAT 也得重启 dsh 才生效。
+#   2. **同名实例全局互斥**：`serverName` 须在 profile 内唯一，撞名会让**整棵插件树**
+#      加载失败（`dsh-mcp-client/src/index.ts:169-172`），而插件无法在运行期增删实例。
+#   3. **能力面被外部进程决定**：列表工具在 TFS 2018 上恒报 `items is not iterable`
+#      （0 命中伪错）、`tfs_search_work_items` 恒 414、`custom_query` 恒 expand/fields 冲突，
+#      插件只能"围绕对方的坑打补丁"。
+#   4. **多一层不可观测的故障域**：tfs-mcp 进程起不来时，插件侧只看到"工具缺失"，
+#      排查要跨进程、跨配置。
+#
+# 现在 TFS 查询与操作**一律直连 REST**（`/_apis/*`）：适配层 `TfsAdapter.call(raw, args)`
+# 把操作键分派到具体端点，凭据由本插件的连接档案服务按调用实时提供
+# （`ProfileService.restConfig()` → `restConfigProvider`），改 PAT 当场生效、无需重启。
+# 写操作仍**只有** `adapter.executeWrite` 一条路径，四道门禁（dry-run/确认/幂等/审计）不变。
+#
+# 副作用：本插件不再需要 `@deepseek-ai/dsh-mcp-client`；
+# 配置字段 `tfsServerName` 已移除（残留取值被 schemastery 忽略，无需清理）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+- insert:
+    - id: tfs-requirment
+      name: '@deepseek-ai/dsh-tfs-requirment'
+      config:
+        # 目标集合清单（FR-025）。运行时可在清单内切换（FR-003）。
+        collections: ['WN_HIS']
+        # 默认目标集合（FR-025）。必须是 collections 之一。
+        defaultCollection: WN_HIS
+        # 定时轮询默认间隔（分钟），最小 1（FR-024/S-14）。
+        pollIntervalMinutes: 5
+        # 打标签默认标签（FR-013）。
+        defaultLabel: dsh
+        # 同时执行需求数上限（FR-029）。
+        maxConcurrentRequirements: 3
+        # 审计日志滚动保留天数（S-03）。
+        auditRetentionDays: 90
+        # 可关闭开关（与宿主其它能力一致）。
+        enabled: true
