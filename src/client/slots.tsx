@@ -137,6 +137,13 @@ type SlotComponent = (props: never) => JSX.Element
 interface SlotRegistry extends SlotRegistryLike {
   inject(slot: string, factory: () => unknown): void
   register(spec: SlotSpec, component: SlotComponent): unknown
+  /**
+   * 订阅某槽的注册变化（`ui-renderer/src/client/registry.ts:462`）。
+   *
+   * 标可选：更老的部署上本插件的类型面与运行期服务可能不完全对齐，
+   * 缺该探针时退回"只看一次当前快照"（见 `panelRowRegistered`）。
+   */
+  subscribe?: (slot: string, fn: () => void) => (() => void)
 }
 type ClientCtx = ClientContext & { slots: SlotRegistry }
 
@@ -149,6 +156,78 @@ type ClientCtx = ClientContext & { slots: SlotRegistry }
  */
 export { registerOnce } from '../shared/slot-registration.js'
 import { registerOnce } from '../shared/slot-registration.js'
+
+/**
+ * 「左侧菜单行是否已注册成功」的控制器（2026-10-08 修：菜单里出现两次「TFS 看板」）。
+ *
+ * ## 事实（本机 DOM 实测，非推断）
+ *
+ * 侧边栏里确实存在**两个** TFS 入口：
+ *   - `sidebar.panellist` 的菜单行（top≈400），宿主 `SidebarRoot.tsx:71` 渲染，带文案；
+ *   - `sidebar.footer.action` 的兼容入口按钮（top≈622），宿主 `SidebarRoot.tsx:307`
+ *     渲染在 `footArea` 里 —— 位置恰好在第三方「今日用量」卡片（top≈582-618）**下方**，
+ *     正是用户报告要取消的那一个。
+ *
+ * ## 为什么会有两个（源码依据）
+ *
+ * footer/overlay 这对入口是给**旧 / 精简宿主**（没有 `main` 与 `sidebar.panellist`，
+ * 只有 `sidebar.footer.action` + `shell.overlay`）准备的兼容通道。当时的注释写着
+ * "在新版宿主（用 main / panellist）上这两条不触发"——依据是"`slots.inject` 仅在该槽
+ * **已被宿主声明时**才执行回调"。
+ *
+ * 这条依据是**错的**：`ui-sidebar` 在新版宿主里**同样声明了** `sidebar.footer.action`
+ * （`packages/client/ui-sidebar/src/client/contract/slots.ts` 的 `SlotMap` 有该键，
+ * 且 `SidebarRoot.tsx:307` 无条件 `renderSlot` 它），并且 `shell.overlay` 也照旧存在。
+ * 于是两条"兼容"注入在新版宿主上**照常跑**，菜单行之外多出一个 footer 入口 ——
+ * 两个入口点开还是同一个 Workbench，纯属重复。
+ *
+ * ## 修法
+ *
+ * 不去猜宿主版本，而是**看菜单行到底注册上了没有**：
+ *   - 菜单行注册成功 ⇒ 用户已有一条正规入口 ⇒ footer 入口不再需要，不注册；
+ *   - 菜单行未注册（旧宿主确实没有 panellist 槽）⇒ 保留 footer 入口作为唯一入口。
+ *
+ * 直接用 `PanelOpenControl` 复用其订阅语义：它的 `getSnapshot` 返回稳定布尔值，
+ * 配合 `useSyncExternalStore` 不会触发无限重渲染（见该类的文档）。
+ *
+ * ## 为什么还需要 subscribe
+ *
+ * `slots.inject('sidebar.footer.action', ...)` 的回调可能**早于**
+ * `sidebar.panellist` 的注册完成（两者声明顺序由宿主的注册顺序决定，不在本插件控制内）。
+ * 那一刻探测结果还是 false，若就此定下"注册 footer 入口"，又会回到两个入口。
+ * 故订阅 panellist 的注册变化：菜单行一出现就把开关翻到 true，footer 组件随即返回 null。
+ */
+export const panelRowRegistered = new PanelOpenControl()
+
+/**
+ * 启动对 `sidebar.panellist` 的观测，把「菜单行是否已注册」同步进 {@link panelRowRegistered}。
+ *
+ * 同步探测一次作为初值；能拿到 `subscribe` 时再订阅后续变化。
+ * 任何一步失败都退化为"当前快照即结论"——最坏结果是保留 footer 入口（回到修复前的状态），
+ * 不会出现入口消失（那才是真的功能丢失）。
+ *
+ * @param slots - 宿主 `ctx.slots`。
+ * @returns dispose（交给 `ctx.effect`，随插件卸载一并退订）。
+ */
+function watchPanelRow(slots: SlotRegistry): () => void {
+  const sync = (): void => {
+    try {
+      const probe = slots.entriesOfSlot
+      if (typeof probe !== 'function') return
+      const has = probe.call(slots, 'sidebar.panellist').some(entry => entry.options?.id === PANEL_ID)
+      if (has) panelRowRegistered.show()
+    } catch {
+      // 槽尚未声明：等 subscribe 回调，或退化为"未注册"。
+    }
+  }
+  sync()
+  try {
+    if (typeof slots.subscribe !== 'function') return () => {}
+    return slots.subscribe('sidebar.panellist', sync)
+  } catch {
+    return () => {}
+  }
+}
 
 /**
  * 宿主布局服务面（宿主 `ILayout` 的**结构子集**）。
@@ -1791,8 +1870,20 @@ export function registerExecutionPanel(ctx: ClientContext): void {
   )
 
   // 4) 旧 / 精简宿主兼容（无 main / panellist，只有 shell.overlay + sidebar.footer.action）：
-  //    footer 入口按钮 + shell.overlay 全屏面板。slots.inject 仅在该槽已被宿主声明时
-  //    才执行回调，故在新版宿主（用 main / panellist）上这两条不触发，跨版本安全。
+  //    footer 入口按钮 + shell.overlay 全屏面板。
+  //
+  //    ⚠️ 旧注释曾写"slots.inject 仅在该槽已被宿主声明时才执行回调，故在新版宿主上
+  //    这两条不触发"——这条依据是**错的**，已实测推翻（见 `panelRowRegistered` 的注释）：
+  //    `ui-sidebar` 在新版宿主上同样声明并渲染 `sidebar.footer.action`，`shell.overlay`
+  //    也照旧存在，于是新版宿主上出现了**两个** TFS 入口（panellist 菜单行 + footArea
+  //    里、紧挨着第三方「今日用量」卡片下方的 footer 按钮），点开还是同一个 Workbench。
+  //
+  //    现在改为**按菜单行是否存在**决定：菜单行注册成功 ⇒ footer/overlay 两个组件
+  //    自身返回 null（注册保留、渲染为空，比"不注册"更安全——`registerOnce` 的
+  //    重跑语义靠注册路径维护）。判断逻辑见 `panelRowRegistered`。
+  //    先启动观测，再注册，保证注册那一刻起就能读到正确开关值。
+  ctx.effect(() => watchPanelRow(slots), 'tfs-requirment: watch sidebar.panellist')
+
   slots.inject(
     'sidebar.footer.action',
     () =>
@@ -1818,8 +1909,14 @@ export function registerExecutionPanel(ctx: ClientContext): void {
 /**
  * 旧 / 精简宿主：`sidebar.footer.action`（list, root）里的 TFS 入口按钮。
  * 点击经 {@link panelOpen}.show() 打开 shell.overlay 中的全屏面板。
+ *
+ * 菜单行（`sidebar.panellist`）已注册时返回 `null` —— 那时用户已有一条正规入口，
+ * 本按钮就是重复的第二个「TFS 看板」（2026-10-08）。返回 null 而非不注册，
+ * 是为了保持 `registerOnce` 的重跑语义与 disposer 链路完整。
  */
-function TfsFooterEntry(): JSX.Element {
+function TfsFooterEntry(): JSX.Element | null {
+  const hasPanelRow = useSyncExternalStore(panelRowRegistered.subscribe, panelRowRegistered.getSnapshot)
+  if (hasPanelRow) return null
   return (
     <button
       type="button"
@@ -1853,7 +1950,9 @@ function TfsFooterEntry(): JSX.Element {
  */
 function TfsOverlayEntry(props: { ctx: ClientContext }): JSX.Element | null {
   const open = useSyncExternalStore(panelOpen.subscribe, panelOpen.getSnapshot)
-  if (!open) return null
+  // 菜单行已注册 ⇒ 面板走 `main` 槽，这条旧宿主全屏通道不再需要（同上）。
+  const hasPanelRow = useSyncExternalStore(panelRowRegistered.subscribe, panelRowRegistered.getSnapshot)
+  if (!open || hasPanelRow) return null
   return (
     <div
       role="dialog"
