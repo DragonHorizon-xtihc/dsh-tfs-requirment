@@ -18,7 +18,7 @@
  * 注册失败（宿主无 settings 服务 / 命名空间冲突）只让"设置区"这一项能力降级，
  * 不影响工具与看板（沿用 dsh-optimized-prompt 的装配纪律）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/settings
+ * @module dsh-tfs-requirment/host/settings
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { type TfsRequirmentConfig } from '../config.js';

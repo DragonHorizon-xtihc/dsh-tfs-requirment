@@ -10,7 +10,7 @@
  * 只读：仅调用 `tfs_whoami` / `tfs_get_current_collection` / `tfs_get_projects`，
  * 不触发任何写操作。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/health
+ * @module dsh-tfs-requirment/host/health
  */
 
 import type { HealthResult } from '../shared/contracts.js'

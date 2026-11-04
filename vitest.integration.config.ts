@@ -12,7 +12,7 @@
  * 约束：不启动真实 GUI、不读写真实 TFS、不碰 DSH home；文件持久化一律用
  * `tests/helpers/memfs.ts` 的内存 fs。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/vitest.integration
+ * @module dsh-tfs-requirment/vitest.integration
  */
 
 import { defineConfig } from 'vitest/config'

@@ -14,7 +14,7 @@
  * 本文件是**纯类型**（`type`-only 导出也行，但这里用普通 interface/type 以便值语义兼容），
  * 不 export 任何运行时值，避免被错打包进任一端。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/contracts
+ * @module dsh-tfs-requirment/shared/contracts
  */
 import type { RequirementBrief } from './brief.js';
 export type { RequirementBrief } from './brief.js';

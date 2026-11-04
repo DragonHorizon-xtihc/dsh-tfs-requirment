@@ -4,7 +4,7 @@
  * 提供路由处理函数共用的三件事：读 JSON body（带体积上限，防滥用）、发 JSON、发错误。
  * 形态对齐 dsh-optimized-prompt/src/http-util.ts（该插件实测可用）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/http-util
+ * @module dsh-tfs-requirment/host/http-util
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'

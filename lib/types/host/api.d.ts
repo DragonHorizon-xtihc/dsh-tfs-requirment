@@ -10,7 +10,7 @@
  * 形式传入，因此可在单测里用桩驱动，无需起真实 DSH 宿主（参考 dsh-optimized-prompt 的
  * host-api / routes 分离）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/api
+ * @module dsh-tfs-requirment/host/api
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { SubagentResult } from '@deepseek-ai/dsh-subagent';

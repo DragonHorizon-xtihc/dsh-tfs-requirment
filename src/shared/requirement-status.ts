@@ -18,7 +18,7 @@
  * 派生规则一旦写进 JSX 就只能靠人眼保证；这里是可单测的纯函数，且宿主半若将来要按同一口径
  * 做筛选也能直接复用（避免两端各写一份必然漂移）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/requirement-status
+ * @module dsh-tfs-requirment/shared/requirement-status
  */
 
 import type { BoardTaskView, RequirementSummary } from './contracts.js'
@@ -130,5 +130,14 @@ export function summarizeRequirementExec(
   if (completed === 0) return { text: '已全部取消', tone: 'todo' }
   // 分母排除已取消任务：它们是"放弃掉的"，算进总数会让 3/3 变成 3/5，用户以为还有两件没做完。
   const total = ownTasks.length - deleted
+  /**
+   * 2026-11-04：需求被**显式**声明为 active（点过「取消完成」、或手动改过状态）时，
+   * 引擎的 markRequirementCompletedIfAllDone 会刻意抑制自动完成（尊重人的声明）。
+   * 于是任务虽已全部收口，需求却仍留在「进行中」页；此处若还显示"已完成 c/t"，
+   * 状态列与所在页签自相矛盾，用户会以为"标记完成没生效"（真机 2059017：任务
+   * completed/success、需求 execState=active、完成回写已 ok，却仍在进行中列表）。
+   * 改为"待确认完成"，需求行同时提供「标记完成」按钮把它迁入已完成页。
+   */
+  if (r.execState === 'active') return { text: `待确认完成 ${completed}/${total}`, tone: 'pending' }
   return { text: `已完成 ${completed}/${total}`, tone: 'done' }
 }

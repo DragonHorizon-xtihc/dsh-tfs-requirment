@@ -1,4 +1,4 @@
-# @deepseek-ai/dsh-tfs-requirment
+# dsh-tfs-requirment
 
 [English](README.md) | 中文
 
@@ -173,9 +173,9 @@ npm run build            # tsc host + tsc client + tsdown → lib/
 
 # 2) 让 web profile 认识本插件（以下路径以 $DSH_HOME 为宿主数据目录）
 #    a. $DSH_HOME/profiles/web/package.json 的 dependencies 增加：
-#         "@deepseek-ai/dsh-tfs-requirment": "link:<repo>/plugins/dsh-tfs-requirment"
-#    b. 同文件 dsh.profile.bundles 数组加入 "@deepseek-ai/dsh-tfs-requirment"
-#    c. dsh plugin add @deepseek-ai/dsh-tfs-requirment   # 建立 node_modules 软链
+#         "dsh-tfs-requirment": "link:<repo>/plugins/dsh-tfs-requirment"
+#    b. 同文件 dsh.profile.bundles 数组加入 "dsh-tfs-requirment"
+#    c. dsh plugin add dsh-tfs-requirment   # 建立 node_modules 软链
 
 # 3) 启动
 dsh --profile web --port 3099

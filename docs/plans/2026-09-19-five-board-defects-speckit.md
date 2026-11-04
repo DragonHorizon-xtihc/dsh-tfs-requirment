@@ -1,7 +1,7 @@
 # SpecKit：dsh-tfs-requirment 看板五问 —— 规格 / 方案 / 任务 / 实现 / 验证
 
 **日期**：2026-09-19
-**对象**：本地 TFS（`http://tfs2018-web.winning.com.cn:8080/tfs`，集合 `WN_HIS`）看板 dsh 插件 `@deepseek-ai/dsh-tfs-requirment`
+**对象**：本地 TFS（`http://tfs2018-web.winning.com.cn:8080/tfs`，集合 `WN_HIS`）看板 dsh 插件 `dsh-tfs-requirment`
 **模块**：需求池面板（`src/client/components/RequirementPool.tsx`）+ 看板壳层（`src/client/slots.tsx`）
 **关联文档**：
 - `docs/plans/2026-09-19-board-shell-and-tfs-rest-design.md`（壳层+REST 总体设计，状态：待批准；其 P1/P2 已落地，**P3 壳层修复未落地**）
@@ -719,7 +719,7 @@ PAT 从活动档案读取、不打印。实测约 13s 返回 62/19/9，`reason` 
 
 ### (3) 部署态 `cordis.patch.yml` 仍拉起 `tfs-mcp` 子进程（已移除）
 
-插件**目录**是符号链接（`node_modules/@deepseek-ai/dsh-tfs-requirment -> plugins/dsh-tfs-requirment`），
+插件**目录**是符号链接（`node_modules/dsh-tfs-requirment -> plugins/dsh-tfs-requirment`），
 但 **profile 级的 `<DSH_HOME>/profiles/web/cordis.patch.yml` 是独立文件、不在软链内**。
 P5 只改了插件自带的 patch，部署态那份仍声明：
 

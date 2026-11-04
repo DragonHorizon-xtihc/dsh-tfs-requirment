@@ -1,6 +1,6 @@
 # dsh-tfs-requirment 插件深度审计与修复报告（2026-10-06）
 
-> 审计对象：`@deepseek-ai/dsh-tfs-requirment@0.1.0`
+> 审计对象：`dsh-tfs-requirment@0.1.0`
 > 根目录：`D:\ClaudeCode\deepseek-harness\plugins\dsh-tfs-requirment`
 > 原则：**每条结论都必须有运行证据**（代码位置 + 运行命令 + 实测输出）。
 > 推断不作为结论；构造不出来的复现，如实标注为「未复现」，并说明为什么。

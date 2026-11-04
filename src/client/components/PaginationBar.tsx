@@ -4,7 +4,7 @@
  * 纯展示组件：页码、每页条数都由父组件持有（后者还要落盘到 ui-state.json），
  * 本组件只负责渲染「共 N 条 ｜ 每页 [条数] ｜ ‹ 1 2 3 ›」并把操作上抛。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/client/components/PaginationBar
+ * @module dsh-tfs-requirment/client/components/PaginationBar
  */
 
 /** 需求池每页条数档位（默认 20）。 */

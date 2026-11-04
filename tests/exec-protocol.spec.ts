@@ -4,6 +4,8 @@ import {
   NEEDS_HUMAN_CONFIRM_MARKER,
   ARTIFACTS_HEADER,
   detectOutcome,
+  assessOutcome,
+  hasDeliveredArtifacts,
   hasExplicitConfirmMarker,
   findConfirmPhrase,
   extractHumanConfirmReason,
@@ -163,5 +165,72 @@ describe('buildExecBudgetSection（问题 1：执行预算与终止纪律）', (
     expect(s).toContain('委派克制')
     expect(s).not.toContain('最多只能向下委派')
     expect(buildExecBudgetSection({ maxDepth: 0 })).toContain('委派克制')
+  })
+})
+
+/**
+ * 2026-11-04 回归：真机上「所有子 Agent 完成后都被标记失败」的根因。
+ *
+ * 子 agent 交付完整报告 + ARTIFACTS 后，仍按协议第 6 条输出 NEEDS_HUMAN_CONFIRM
+ * 描述**非阻塞遗留项**（真机桌面端补测 / TFS 写门禁），旧判据见标记就判
+ * needs_confirmation → 自动扫尾反复续跑 → 主 agent 兜底无产出时收口成 failed。
+ * 修复：有交付证据时按 success 收口，遗留项写进 deferredNote。
+ */
+describe('2026-11-04：已交付 + 遗留项 ≠ 待确认', () => {
+  const delivered = [
+    '## ① 做了什么',
+    '改造完成，验证报告已生成。',
+    ARTIFACTS_HEADER,
+    '- D:\\\\reports\\\\verification.md',
+    '',
+    `${NEEDS_HUMAN_CONFIRM_MARKER}: 请在真实 WiNEX 桌面端补测开关对照。`,
+  ].join('\n')
+
+  it('ARTIFACTS 绝对路径 + 显式确认标记 ⇒ success + deferredNote（核心修复）', () => {
+    const a = assessOutcome('completed', delivered)
+    expect(a.outcome).toBe('success')
+    expect(a.deferredNote).toContain('遗留项')
+    expect(a.deferredNote).toContain('WiNEX')
+    expect(detectOutcome('completed', delivered)).toBe('success')
+  })
+
+  it('TASK_DONE 独占一行 + 确认标记 ⇒ 仍按 success（完成标记是更强信号）', () => {
+    const out = `报告已完成。\n${NEEDS_HUMAN_CONFIRM_MARKER}: 请补测\n${TASK_DONE_MARKER}`
+    expect(detectOutcome('completed', out)).toBe('success')
+  })
+
+  it('只请求确认、没有任何交付证据 ⇒ 仍是 needs_confirmation（保留协议本意）', () => {
+    const out = `方案未定。\n${NEEDS_HUMAN_CONFIRM_MARKER}: 请选择接口口径`
+    const a = assessOutcome('completed', out)
+    expect(a.outcome).toBe('needs_confirmation')
+    expect(a.deferredNote).toBeUndefined()
+  })
+
+  it('兜底短语 + ARTIFACTS ⇒ success（模型没按标记协议也一样）', () => {
+    const out = `改动已就绪，请人工确认。\n${ARTIFACTS_HEADER}\n- /abs/out.patch`
+    expect(detectOutcome('completed', out)).toBe('success')
+  })
+
+  it('stopReason 非 completed ⇒ failed，交付证据也不救', () => {
+    expect(assessOutcome('error', delivered).outcome).toBe('failed')
+    expect(assessOutcome(undefined, delivered).outcome).toBe('failed')
+  })
+
+  it('hasDeliveredArtifacts：正文提到 TASK_DONE / 相对路径都不算', () => {
+    expect(hasDeliveredArtifacts('正文提到 TASK_DONE 这个标记')).toBe(false)
+    expect(hasDeliveredArtifacts(`${ARTIFACTS_HEADER}\n- reports/方案.md`)).toBe(false)
+    expect(hasDeliveredArtifacts(`${ARTIFACTS_HEADER}\n- D:/out.md`)).toBe(true)
+    expect(hasDeliveredArtifacts(`完结\n${TASK_DONE_MARKER}`)).toBe(true)
+    expect(hasDeliveredArtifacts(undefined)).toBe(false)
+  })
+})
+
+describe('2026-11-04：执行纪律区分非阻塞遗留项与真正卡住', () => {
+  it('协议明确"遗留事项仍按已完成收口"', () => {
+    const s = buildExecBudgetSection()
+    expect(s).toContain('遗留事项')
+    expect(s).toContain('仍按已完成收口')
+    expect(s).toContain(TASK_DONE_MARKER)
+    expect(s).toContain(NEEDS_HUMAN_CONFIRM_MARKER)
   })
 })

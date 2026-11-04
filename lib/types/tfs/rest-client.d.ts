@@ -23,7 +23,7 @@
  *    指定的项目」。项目名唯一权威来源 = `GET /_apis/projects`。
  * 8. `GET /_apis/`（位置服务根）在此部署 **401**，不要依赖。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/tfs/rest-client
+ * @module dsh-tfs-requirment/tfs/rest-client
  */
 /** TFS 2018 的主线 API 版本（`7.1` 家族会 404，勿改）。 */
 export declare const API_VERSION = "4.1";

@@ -21,7 +21,7 @@
 
 **Purpose**: 插件包初始化与规格子文档落地
 
-- [X] T001 创建插件包骨架 `package.json`（`@deepseek-ai/dsh-tfs-requirment`；`main: lib/index.js`；`exports` 含 `.`/`./client`/`./cordis.patch.yml`/`package.json`；`dsh.bundle.patch`；`dsh.client.platform: 'web'`；peerDeps `*` 指向 `@deepseek-ai/*`）
+- [X] T001 创建插件包骨架 `package.json`（`dsh-tfs-requirment`；`main: lib/index.js`；`exports` 含 `.`/`./client`/`./cordis.patch.yml`/`package.json`；`dsh.bundle.patch`；`dsh.client.platform: 'web'`；peerDeps `*` 指向 `@deepseek-ai/*`）
 - [X] T002 [P] 编写 `cordis.patch.yml`（`- insert: - id: tfs-requirment / name / config`；并声明 `tfs-mcp` server 实例，`serverName` 唯一，重复即配置期硬错误）
 - [X] T003 [P] 编写 `tsconfig.host.json` 与 `tsconfig.client.json`（参考宿主插件构建约定）
 - [X] T004 [P] 更新 `.gitignore`：追加 `.env.*`、`board.json`、`events.jsonl`、插件私有数据目录（PAT 与看板数据不进版本控制，FR-002/FR-031）

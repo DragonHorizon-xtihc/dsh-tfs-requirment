@@ -20,7 +20,7 @@
  * 所有动作经 `HostBridge` 用 `fetch` 打到宿主半的 HTTP 路由
  * （路径见 `TFS_ROUTES`，实现见 `src/host/route.ts`）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/client/slots
+ * @module dsh-tfs-requirment/client/slots
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'

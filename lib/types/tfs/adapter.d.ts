@@ -14,7 +14,7 @@
  *
  * `tools`（宿主 `ctx.tools`）已不再使用，保留字段仅为兼容既有装配与测试桩（渐进移除）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/tfs/adapter
+ * @module dsh-tfs-requirment/tfs/adapter
  */
 import type { WriteOpType } from './types.js';
 import type { RequirementFilter, RequirementListResult, RequirementQueryOptions, RequirementSummary } from '../shared/contracts.js';

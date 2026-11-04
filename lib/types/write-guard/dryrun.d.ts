@@ -4,7 +4,7 @@
  * 纯函数：对 `WriteOp.before/after` 做字段级 diff，产出 `DryRunPreview` 供 ExecutionPanel
  * 渲染「确认回写」卡片。支持标量变更、数组集合差（标签/链接增删）、对象键级 diff。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/write-guard/dryrun
+ * @module dsh-tfs-requirment/write-guard/dryrun
  */
 import type { WriteOpType } from '../tfs/types.js';
 /** 单字段 diff。 */

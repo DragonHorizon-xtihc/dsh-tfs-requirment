@@ -15,7 +15,7 @@
  *
  * 运行：`node <host>/node_modules/tsx/dist/cli.mjs scripts/real-chain.ts`
  *
- * @module @deepseek-ai/dsh-tfs-requirment/scripts/real-chain
+ * @module dsh-tfs-requirment/scripts/real-chain
  */
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

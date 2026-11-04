@@ -11,8 +11,8 @@
 与仓库先例 `@deepseek-ai/dsh-optimized-prompt` 一致：
 ```bash
 # 1) 在 $DSH_HOME/profiles/web/package.json 的 dependencies 加：
-#    "@deepseek-ai/dsh-tfs-requirment": "link:<本插件绝对路径>"
-# 2) 同文件 dsh.profile.bundles 数组加入 "@deepseek-ai/dsh-tfs-requirment"
+#    "dsh-tfs-requirment": "link:<本插件绝对路径>"
+# 2) 同文件 dsh.profile.bundles 数组加入 "dsh-tfs-requirment"
 # 3) 建立软链（dsh plugin add 会代劳，或手动 link）
 pnpm --filter <web-profile> install
 ```

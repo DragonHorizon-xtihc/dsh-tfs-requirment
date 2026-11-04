@@ -31,7 +31,7 @@
  * 4. 角色端口无写能力（测试/降级装配）→ 回落列表第一个角色；
  * 5. 一个角色都没有 → undefined（decompose 以「通用工程师」名称占位）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/orchestration/role-match
+ * @module dsh-tfs-requirment/orchestration/role-match
  */
 import type { RoleDefinition } from '../shared/contracts.js';
 /**

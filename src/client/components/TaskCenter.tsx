@@ -1299,6 +1299,13 @@ export function TaskCenter(props: {
                   const ownTasks = tasks.filter(t => t.requirementId === key)
                   const activeCount = ownTasks.filter(t => t.state !== 'deleted').length
                   const deletedCount = ownTasks.length - activeCount
+                  // 2026-11-04：「标记完成」判定要看**未收口**任务，不能把 completed 算成"在办"。
+                  // activeCount 含已完成/进行中，旧条件 `activeCount===0 && deletedCount>0`
+                  // 只在"任务全部被取消"时成立 ⇒ 任务全部 completed 的需求没有归档入口。
+                  const openCount = ownTasks.filter(
+                    t => t.state !== 'completed' && t.state !== 'deleted',
+                  ).length
+                  const completedCount = ownTasks.filter(t => t.state === 'completed').length
                   // 焦点行标记（2026-11-03 问题 1）：该行 = 右侧主对话框当前显示的需求。
                   const isChatFocus = key === chatFocusKey
                   return (
@@ -1410,19 +1417,24 @@ export function TaskCenter(props: {
                           </button>
                         )}
 {/*
-           * 「标记完成」：把「全部任务已取消」的需求收进「已完成」页。
+           * 「标记完成」：把名下任务**全部已收口**的需求收进「已完成」页。
            *
-           * 看板引擎的 `isRequirementAllTasksDone` 要求**至少一个**任务 completed 才允许自动
-           * 收口，于是"名下任务全被取消"的需求会永远停在进行中（执行状态显示「已全部取消」）。
-           * 手动入口此前不存在：`SetRequirementExecStateInput.state` 的契约支持 `'completed'`，
-           * 但 UI 只调过 `'active'`，这条需求因此无法归档——只能一直挂着，或手工去改 board.json。
-           * 条件与"可还原"按钮同源（无未取消任务且至少有一个已取消任务），两者互斥。
+           * 看板引擎的 `markRequirementCompletedIfAllDone` 只对 execState 缺键（未判定）
+           * 生效；一旦需求被显式写成 `active`（点过「取消完成」），自动完成会被刻意抑制
+           * ——这是设计，但对用户形成死锁：任务全 completed、完成回写也 ok，需求却永远
+           * 留在「进行中」页，而旧按钮条件只在"全部任务已取消"时显示，没有归档入口
+           * （2026-11-04 真机 2059017）。
+           *
+           * 因此条件改为 `openCount===0 && ownTasks.length>0`：覆盖"全部已取消"与
+           * "全部已完成"两种终态，都允许人显式确认完成。completed 不能被算作"在办"。
            */}
-          {props.onSetRequirementExecState && activeCount === 0 && deletedCount > 0 && (
+          {props.onSetRequirementExecState && openCount === 0 && ownTasks.length > 0 && (
             <button
               style={{ ...buttonStyle, marginRight: 6 }}
               disabled={busy}
-              title="全部任务都已取消：手动确认需求已处理完，归入「已完成」页（可再「取消完成」撤回）"
+              title={completedCount > 0
+                ? '任务已全部完成：手动确认需求已处理完，归入「已完成」页（可再「取消完成」撤回）'
+                : '全部任务都已取消：手动确认需求已处理完，归入「已完成」页（可再「取消完成」撤回）'}
               onClick={e => {
                 e.stopPropagation()
                 void setReqExecState(key, 'completed')

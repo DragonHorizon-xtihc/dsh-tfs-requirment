@@ -23,7 +23,7 @@
  * DAG 的自动推进已下沉到宿主（任务收口钩子 → `Board.autoStartRunnable`，问题 6），
  * 前端不再靠轮询驱动任务，轮询只用于**展示**进展，因此全空闲时可以安全停拍。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/client/board-store
+ * @module dsh-tfs-requirment/client/board-store
  */
 
 import { useEffect, useState } from 'react'

@@ -9,7 +9,7 @@
  * - `renameSync` 覆盖式迁移；`readFileSync` 缺失抛 `ENOENT`；
  * - `appendFileSync` 行式追加。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/tests/helpers/memfs
+ * @module dsh-tfs-requirment/tests/helpers/memfs
  */
 
 import { dirname } from 'node:path'

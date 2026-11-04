@@ -347,7 +347,7 @@ if (ns === undefined) return []                            // 降级，不是报
 | A5 | **失败策略：log 不 throw，绝不拖垮 shell boot**（sysmon #9 文件头） | ✅ **已具备** | `registerSideTab` 整体 try/catch；`registerPanelDataHandler` 等均走降级 |
 | A6 | **`tab.visible` 驱动暂停轮询**（sysmon `tab.tsx:63-70`） | ✅ **可兼容（建议采纳）** | 我们右栏面板已有 `props`/生命周期，可接可见性；轮询当前在客户端 `setInterval` |
 | A7 | **`connection/reset` 重连处理**（xuan #6 `:92-96`） | ✅ **可兼容（建议采纳）** | 纯客户端订阅，无新依赖；断线后应 `refreshNow()` |
-| A8 | **多插件共存幂等守卫**（bga `apply-guard.ts`） | ⚠️ 部分 | 思想可贵，但我们的槽位 id 已唯一（`@deepseek-ai/dsh-tfs-requirment#exec`），冲突概率低。**成本 > 收益，暂不采纳** |
+| A8 | **多插件共存幂等守卫**（bga `apply-guard.ts`） | ⚠️ 部分 | 思想可贵，但我们的槽位 id 已唯一（`dsh-tfs-requirment#exec`），冲突概率低。**成本 > 收益，暂不采纳** |
 | B1 | **DOM 注入 + rAF 补位**（bga `sidebar-entry.ts`） | ❌ **不兼容** | 依赖 `[data-pane="sidebar"]` 等易变结构；我们已有官方槽位，降级无意义 |
 | B2 | **劫持宿主 `inject`**（kanban `:191-246`） | ❌ **不兼容** | 改写宿主内部对象，无契约；且我们的槽位已能达成同样目的 |
 | B3 | **虚拟工作区**（kanban `:86-127`） | ❌ **不适用** | 产品假设是"看板任务=会话组"；我们的任务是 TFS 工作项，语义不对齐 |

@@ -857,4 +857,47 @@ describe('主 agent 扫尾（问题 7）', () => {
     expect(t.execState).toBe('success')
     expect(t.orchestration?.sweepRound).toBe(1)
   })
+
+  /**
+   * 2026-11-04 真机 2059017：子 agent 交付完整报告 + ARTIFACTS，末尾用
+   * NEEDS_HUMAN_CONFIRM 描述非阻塞遗留项（真机桌面端补测 / TFS 写门禁）。
+   * 旧判据把它判成 needs_confirmation → 自动扫尾反复续跑 → 主 agent 兜底无产出
+   * 时收口成 failed，表现为「所有子 Agent 完成后都被标记失败」。
+   */
+  it('已交付 + ARTIFACTS + NEEDS_HUMAN_CONFIRM ⇒ success 且不触发扫尾', async () => {
+    const { api, svc, dispatcher } = harnessSweep()
+    await api.dispatch({ draft: dispatchDraft, targetWorkItem: '1@WN_HIS', collection: 'WN_HIS', taskId: TASK })
+    dispatcher.settle(TASK, {
+      output: text([
+        '## ① 做了什么',
+        '改造完成，验证报告已生成。',
+        'ARTIFACTS:',
+        '- D:/work/verification-report.md',
+        '',
+        'NEEDS_HUMAN_CONFIRM: 请在真实 WiNEX 桌面端补测开关对照。',
+      ].join('\n')),
+      stopReason: 'completed',
+    })
+    await drain()
+
+    const t = taskView(svc)
+    expect(t.state).toBe('completed')
+    expect(t.execState).toBe('success')
+    expect(t.attempts.at(-1)?.note ?? '').toContain('遗留项')
+    // 判成功 ⇒ 不进扫尾续跑（这正是反复重跑/最终判失败的根因）。
+    expect(dispatcher.calls.length).toBe(1)
+  })
+
+  it('扫尾主 agent 无产出 ⇒ 停在待确认，绝不把既有产出判成 failed', async () => {
+    const { api, svc, dispatcher, decideCalls } = harnessSweep({ decide: async () => '' })
+    await api.dispatch({ draft: dispatchDraft, targetWorkItem: '1@WN_HIS', collection: 'WN_HIS', taskId: TASK })
+    dispatcher.settle(TASK, { output: text('这个任务我无法执行。'), stopReason: 'refusal' })
+    await drain()
+
+    expect(decideCalls.length).toBe(1)
+    const t = taskView(svc)
+    expect(t.execState).toBe('needs_confirmation')
+    expect(t.attempts.at(-1)?.stopReason).toBe('sweep-main-agent-empty')
+    expect(t.attempts.at(-1)?.note ?? '').toContain('扫尾未产出')
+  })
 })

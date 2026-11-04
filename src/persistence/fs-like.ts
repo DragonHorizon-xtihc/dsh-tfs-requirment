@@ -6,7 +6,7 @@
  * - 不触碰被杀软实时扫描的真实磁盘（避免 rmSync 等清理动作被锁超时）；
  * - 用例确定性、秒级、可并行。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/persistence/fs-like
+ * @module dsh-tfs-requirment/persistence/fs-like
  */
 
 import {

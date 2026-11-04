@@ -23,7 +23,7 @@
  *    指定的项目」。项目名唯一权威来源 = `GET /_apis/projects`。
  * 8. `GET /_apis/`（位置服务根）在此部署 **401**，不要依赖。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/tfs/rest-client
+ * @module dsh-tfs-requirment/tfs/rest-client
  */
 
 import { scrubCredentials } from '../shared/redact.js'

@@ -11,7 +11,7 @@
  * 3. **关键产物清单**（问题 4）：子智能体在结尾用 `ARTIFACTS:` 段给出要归档的文件绝对路径，
  *    由 {@link parseArtifactPaths} 解析后上传为需求附件。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/exec-protocol
+ * @module dsh-tfs-requirment/shared/exec-protocol
  */
 /** 收口判定的三态：成功 / 失败 / 待人工确认（问题 5）。 */
 export type ExecOutcome = 'success' | 'failed' | 'needs_confirmation';

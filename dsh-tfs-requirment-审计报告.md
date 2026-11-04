@@ -2,7 +2,7 @@
 
 > 审计日期：2026-10-05　|　审计对象：
 >
-> `@deepseek-ai/dsh-tfs-requirment@0.1.0`
+> `dsh-tfs-requirment@0.1.0`
 > 插件根目录：
 >
 > `D:\ClaudeCode\deepseek-harness\plugins\dsh-tfs-requirment`

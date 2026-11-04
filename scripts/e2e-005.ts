@@ -16,7 +16,7 @@
  *
  * 运行：`node <repo>/node_modules/tsx/dist/cli.mjs scripts/e2e-005.ts`
  *
- * @module @deepseek-ai/dsh-tfs-requirment/scripts/e2e-005
+ * @module dsh-tfs-requirment/scripts/e2e-005
  */
 
 import { readFileSync } from 'node:fs'

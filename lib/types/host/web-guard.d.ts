@@ -11,7 +11,7 @@
  * 该门禁封装不是宿主对外 API（无包导出），故按参考插件做法在宿主半本地实现一份，
  * 不 import `@deepseek-ai/dsh-client-connection`，避免装配顺序变化导致模块缺失而失败。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/web-guard
+ * @module dsh-tfs-requirment/host/web-guard
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 /**

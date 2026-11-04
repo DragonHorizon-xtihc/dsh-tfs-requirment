@@ -15,7 +15,7 @@
 - 三份类型检查（host / client / tests）全部 **exit 0 零错误**；
 - 单测 **883/883 全通过（0 失败，53 个测试文件）**，其中技能目录专项 `tests/dsh-catalog-skills-scope.spec.ts` **7/7 通过**、通用目录 `tests/dsh-catalog.spec.ts` **16/16 通过**；
 - 11 个自建冷启动行为探针（对编译产物 `lib/types/host/dsh-catalog.js` 直接加载实测）全部 exit 0：主路径 acquireScope 作用域并集实测 **124 条（24 全局 + 100 用户级，超出 24 的卡点）**，坏 preset 跳过、租约零泄漏、作用域 list 抛错可归因、降级告警全部按设计触发；
-- 部署面同步：仓库 `lib/types/host/dsh-catalog.js` 与 `~/.dsh/profiles/web/node_modules/@deepseek-ai/dsh-tfs-requirment/lib/types/host/dsh-catalog.js` **md5 一致**（535f750afda3062abf0c98c153547149）——运行实例加载的就是已修复代码（如 Web GUI 面板仍显示旧值，点「重新采集目录」或重启宿主即可）。
+- 部署面同步：仓库 `lib/types/host/dsh-catalog.js` 与 `~/.dsh/profiles/web/node_modules/dsh-tfs-requirment/lib/types/host/dsh-catalog.js` **md5 一致**（535f750afda3062abf0c98c153547149）——运行实例加载的就是已修复代码（如 Web GUI 面板仍显示旧值，点「重新采集目录」或重启宿主即可）。
 
 ---
 
@@ -135,7 +135,7 @@ skillWarnings = ["技能目录：预设「preset-alpha」作用域层 list 抛�
 
 | 检查 | 命令/方式 | 结果 |
 |---|---|---|
-| 部署同步 | `md5sum lib/types/host/dsh-catalog.js ~/.dsh/profiles/web/node_modules/@deepseek-ai/dsh-tfs-requirment/lib/types/host/dsh-catalog.js` | 两边均 `535f750afda3062abf0c98c153547149`，**一致** |
+| 部署同步 | `md5sum lib/types/host/dsh-catalog.js ~/.dsh/profiles/web/node_modules/dsh-tfs-requirment/lib/types/host/dsh-catalog.js` | 两边均 `535f750afda3062abf0c98c153547149`，**一致** |
 | 部署面含新路径 | `grep acquireScope lib/types/host/dsh-catalog.js` | :231 能力探测、:255 调用、:261 finally asyncDispose、:292/:296 双包名 import 全部在产物中 |
 | 探针无残留 | 探针后 `ls lib/types/host/node_modules` | 无输出（fake 包已删还原）；源码/测试 git 状态零改动 |
 | 认知面验证 | 跨作用域 first-wins 抽查 | 假定 preset 层技能 P 与全局层同名 P 并存时按 dsh-skill 规则全局层优先（registry 内部去重），插件层对跨作用域同名再取首个命中（normalizeSkillRows :221 `out.has(name)`），与 0.1.6 时代行为一致 |

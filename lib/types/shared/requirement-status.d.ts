@@ -18,7 +18,7 @@
  * 派生规则一旦写进 JSX 就只能靠人眼保证；这里是可单测的纯函数，且宿主半若将来要按同一口径
  * 做筛选也能直接复用（避免两端各写一份必然漂移）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/requirement-status
+ * @module dsh-tfs-requirment/shared/requirement-status
  */
 import type { BoardTaskView, RequirementSummary } from './contracts.js';
 /** 执行状态的语义色调（UI 负责映射到具体配色，本层不碰样式）。 */

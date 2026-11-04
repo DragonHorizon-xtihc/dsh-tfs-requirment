@@ -10,7 +10,7 @@
  * 若把任务 id 直接当需求键用，按 `@` 切分会得到集合 `WN_HIS#analyze` —— 拿去打 TFS
  * 只会换来一个更费解的 404。故统一经这里**先剥 `#…` 段**再切集合。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/target
+ * @module dsh-tfs-requirment/shared/target
  */
 import type { TargetRef } from './contracts.js';
 /**

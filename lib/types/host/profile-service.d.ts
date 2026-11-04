@@ -25,7 +25,7 @@
  * - `getCredential()` 仅在 `restConfig()` 与导出用凭据文件这两条路径上被调用；
  * - `delete()` 走 `ProfileStore` 的随机字节覆写（S-12）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/profile-service
+ * @module dsh-tfs-requirment/host/profile-service
  */
 import { ProfileStore } from '../profile/store.js';
 import { type FsLike } from '../persistence/fs-like.js';

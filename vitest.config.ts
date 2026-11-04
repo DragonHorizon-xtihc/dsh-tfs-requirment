@@ -9,7 +9,7 @@
  *
  * 集成用例（真实 cordis 上下文装载插件）见 vitest.integration.config.ts。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/vitest
+ * @module dsh-tfs-requirment/vitest
  */
 
 import { defineConfig } from 'vitest/config'

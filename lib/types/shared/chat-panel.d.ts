@@ -6,7 +6,7 @@
  *   2. {@link resolveChatFocusKey} —— 对话框焦点需求键推导（需求行点击切换用）；
  *   3. {@link SessionRefCache} —— 会话引用缓存（grace 释放），修「第二次进入对话框无内容」。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/chat-panel
+ * @module dsh-tfs-requirment/shared/chat-panel
  */
 /** 相位计算所需的会话快照子集（宿主 `SessionSnapshot` 的结构面）。 */
 export interface ChatPhaseSession {

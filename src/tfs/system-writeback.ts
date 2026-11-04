@@ -14,7 +14,7 @@
  * 幂等性由 finalizer 的报告账本 + 门禁3 双重保证。门禁3 判重拒绝时本端口归一为 `skipped`
  * （而非错误），其余门禁 / REST 失败抛错，由 finalizer 记为逐项 `error`，不阻断其它项。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/tfs/system-writeback
+ * @module dsh-tfs-requirment/tfs/system-writeback
  */
 import { identityStr, type TfsAdapter, type WriteOutcome } from './adapter.js'
 

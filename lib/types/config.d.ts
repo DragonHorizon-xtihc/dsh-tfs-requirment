@@ -3,7 +3,7 @@
  *
  * 依据宪法 VI，禁止把这类取值写成模块级常量再留一个"测试钩子"。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/config
+ * @module dsh-tfs-requirment/config
  */
 import z from '@deepseek-ai/schemastery';
 /** 插件配置的已解析形态（schemastery 已填默认值）。 */

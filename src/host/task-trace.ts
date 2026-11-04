@@ -14,7 +14,7 @@
  * 来源给统一快照（`packages/session-query/session-query/src/.../observation.ts`），并处理了
  * fork 继承、游标、租约释放；我们只需在用完后 dispose。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/task-trace
+ * @module dsh-tfs-requirment/host/task-trace
  */
 import type { Board } from '../core/board/board.js'
 import type { TaskTraceEntry, TaskTraceResult } from '../shared/contracts.js'

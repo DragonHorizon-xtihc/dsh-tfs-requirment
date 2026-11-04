@@ -13,7 +13,7 @@
  *    （"在进程边界之前失败，而不是变成一个含糊的 spawn ENOENT"）；
  * 3. 把该路径作为**任务上下文**交给角色智能体（写进派发 prompt），并在看板/UI 可见。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/workspace
+ * @module dsh-tfs-requirment/shared/workspace
  */
 
 /**

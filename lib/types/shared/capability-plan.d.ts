@@ -26,7 +26,7 @@
  *
  * 纯函数（无 node/DOM 依赖）以便客户端半复用文案与步骤解析、并在单测里直接驱动。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/capability-plan
+ * @module dsh-tfs-requirment/shared/capability-plan
  */
 /** 一个技能正文（宿主 `ctx.skills.get()` 的结果切片）。 */
 export interface CapabilitySkillBody {

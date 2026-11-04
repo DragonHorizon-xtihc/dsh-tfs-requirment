@@ -10,7 +10,7 @@
  * 形式传入，因此可在单测里用桩驱动，无需起真实 DSH 宿主（参考 dsh-optimized-prompt 的
  * host-api / routes 分离）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/api
+ * @module dsh-tfs-requirment/host/api
  */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -31,7 +31,7 @@ import { blocksToText, truncate } from './trace-mapper.js'
 import { buildWorkspacePromptSection, normalizeWorkspace } from '../shared/workspace.js'
 import {
   buildExecBudgetSection,
-  detectOutcome,
+  assessOutcome,
   extractHumanConfirmReason,
   parseArtifactPaths,
 } from '../shared/exec-protocol.js'
@@ -1598,11 +1598,16 @@ export function createHostApi(deps: HostApiDeps): HostApi {
               }
             }
             /**
-             * 问题 5：收口不再只看 stopReason。`detectOutcome` 同时检查输出内容——
-             * stopReason=completed 但结论是"请人工确认/人工确定"时，判 needs_confirmation，
+             * 问题 5：收口不再只看 stopReason。`assessOutcome` 同时检查输出内容——
+             * stopReason=completed 但结论是"请人工确认/人工确定"时判 needs_confirmation，
              * 任务停在待确认（看板态保持 in_progress），不自动进入下游、不触发完成回写。
+             *
+             * 2026-11-04：`NEEDS_HUMAN_CONFIRM` 常被模型用来描述**非阻塞遗留项**，而任务
+             * 本身已经交付完整报告与 ARTIFACTS。assessOutcome 在有交付证据时判 success
+             * 并给 deferredNote，避免"所有子 agent 完成后都被判失败/待确认"（真机 2059017）。
              */
-            const outcome = detectOutcome(sr?.stopReason, output)
+            const assessment = assessOutcome(sr?.stopReason, output)
+            const outcome = assessment.outcome
             /**
              * 2026-10-30（诉求 2）：pseudoToolCalls（输出里是 <read> 这类文本形态工具调用）
              * **直接判失败**，不再降级为待人工确认——那不是"没留痕"，而是什么都没执行
@@ -1641,6 +1646,8 @@ export function createHostApi(deps: HostApiDeps): HostApi {
                 stopReason: sr?.stopReason,
                 ...(output ? { output } : {}),
                 ...(artifactPaths.length > 0 ? { artifactPaths } : {}),
+                // 已交付但模型标注了需人工补做的遗留项：写进备注，不阻断完成。
+                ...(assessment.deferredNote ? { note: assessment.deferredNote } : {}),
               })
             } else if (outcome === 'needs_confirmation') {
               const reason = extractHumanConfirmReason(output)
@@ -2717,22 +2724,27 @@ export function createHostApi(deps: HostApiDeps): HostApi {
         delay(decideTimeoutMs + 5_000).then(() => ''),
       ])
     } catch (e) {
-      board.settleTask(taskId, 'failed', {
-        note: `扫尾失败：${reason}；主 agent 执行异常：${e instanceof Error ? e.message : String(e)}`,
+      /**
+       * 2026-11-04：扫尾是**增强能力**，绝不能把子 agent 已经交付的产出覆盖成"失败"
+       * （纪律 16）。真机 2059017 的 `sweep-main-agent-empty` 就是这样把一份完整报告
+       * 判成失败的。异常/无产出/仍需人工一律停在 `needs_confirmation` 等人处理。
+       */
+      board.settleTask(taskId, 'needs_confirmation', {
+        note: `扫尾未产出（增强能力异常，不影响既有产出）：${reason}；${e instanceof Error ? e.message : String(e)}。请在任务详情确认通过或追问。`,
         stopReason: 'sweep-main-agent-error',
       })
       return
     }
     if (!text) {
-      board.settleTask(taskId, 'failed', {
-        note: `扫尾失败：${reason}；主 agent 也未产出结果，等待人工处理`,
+      board.settleTask(taskId, 'needs_confirmation', {
+        note: `扫尾未产出（主 agent 未返回结果，不影响既有产出）：${reason}。请查看「执行过程」里的既有报告，确认通过或追问。`,
         stopReason: 'sweep-main-agent-empty',
       })
       return
     }
-    // 亲做结果判定与子 agent 同口径：完成标记/无待确认迹象 ⇒ 成功；否则失败（留人工）。
+    // 亲做结果判定与子 agent 同口径：完成标记/无待确认迹象 ⇒ 成功；否则停在待确认（留人工），不判死。
     const done = /\bTASK_DONE\b/.test(text) || !/NEEDS_HUMAN_CONFIRM|请人工确认|人工确认/.test(text)
-    board.settleTask(taskId, done ? 'success' : 'failed', {
+    board.settleTask(taskId, done ? 'success' : 'needs_confirmation', {
       output: text,
       note: `主 agent 亲自完成（扫尾）：${reason}`,
       ...(done ? {} : { stopReason: 'sweep-main-agent-needs-human' }),

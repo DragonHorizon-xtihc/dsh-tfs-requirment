@@ -11,7 +11,7 @@ import { Config } from '../src/index.js'
  * 不构造真实 `Context`：装配副作用（`ctx.effect`/定时器/REST 客户端）需要 DSH home
  * 与真实宿主，超出本配置的边界；这里只固定"能装载 + 导出面形状"。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/tests/plugin-load.integration
+ * @module dsh-tfs-requirment/tests/plugin-load.integration
  */
 describe('插件本体装载', () => {
   it('src/index.ts 可被运行时加载', () => {

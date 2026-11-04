@@ -26,7 +26,7 @@ TFS 接入**全部经 `tfs-mcp`**；凭据经 profile 安全存储；所有写�
 **Testing**: `vitest`（unit）+ 面向 tfs-mcp 的契约测试（实施期用真实只读调用 + 沙盘写调用）；
 须过宪法 Principle VII 测试门禁（tasks 阶段细化）
 **Target Platform**: 用户本机 Windows（`pnpm` 安装、DSH web profile 加载；UI 平台 `web`）
-**Project Type**: DSH 插件（server 半 + client 半），包名 `@deepseek-ai/dsh-tfs-requirment`
+**Project Type**: DSH 插件（server 半 + client 半），包名 `dsh-tfs-requirment`
 **Performance Goals**: 定时轮询默认间隔 ≥ 5 分钟、增量拉取；单用户；无高并发要求
 **Constraints**: TFS **2018 本地部署** REST API 版本限制；MCP 工具名规则 `mcp__<serverName>__<rawName>`；
 `plugins/` 不在 pnpm workspace，需 `cordis.patch.yml` 接入（宪法 2.D）

@@ -3,7 +3,7 @@
  *
  * 输出 `.ai-board/计划看板.md`，顶部标注「自动生成请勿手改」。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/persistence/markdown
+ * @module dsh-tfs-requirment/persistence/markdown
  */
 import type { BoardState } from '../core/board/board.js';
 import type { TaskSnapshot } from '../core/board/task.js';

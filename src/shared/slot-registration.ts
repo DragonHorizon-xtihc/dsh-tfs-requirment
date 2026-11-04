@@ -13,7 +13,7 @@
  * `TS6142: --jsx is not set`。把纯逻辑下沉到 `src/shared`，客户端半与测试都能引用，
  * 且不引入 DOM 依赖。这与 `src/shared/redact.ts` / `src/shared/poll.ts` 是同一手法。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/slot-registration
+ * @module dsh-tfs-requirment/shared/slot-registration
  */
 
 /**

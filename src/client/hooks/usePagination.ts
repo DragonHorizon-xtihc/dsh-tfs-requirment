@@ -10,7 +10,7 @@
  *   - `resetPage` 供筛选条件变化 / 手动刷新时回到第 1 页；
  *   - `paginate(items)` 返回当前页切片，`rangeStart/rangeEnd` 给分页栏做「第 a–b 条 / 共 n 条」。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/client/hooks/usePagination
+ * @module dsh-tfs-requirment/client/hooks/usePagination
  */
 import { useState } from 'react'
 

@@ -23,7 +23,7 @@
  * 任何异常/不可读/无时间戳 ⇒ 返回 `undefined`（= 不可观测）。调用方**必须**把"不知道"当成
  * "不能据此判空转"（fail-open，退回按总时长终止），绝不能因为探不到就更早杀掉子 agent。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/session-activity
+ * @module dsh-tfs-requirment/host/session-activity
  */
 
 /** observeSession 的最小结构面（避免硬依赖宿主的 branded 类型）。 */

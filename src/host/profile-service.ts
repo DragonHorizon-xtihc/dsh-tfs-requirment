@@ -25,7 +25,7 @@
  * - `getCredential()` 仅在 `restConfig()` 与导出用凭据文件这两条路径上被调用；
  * - `delete()` 走 `ProfileStore` 的随机字节覆写（S-12）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/profile-service
+ * @module dsh-tfs-requirment/host/profile-service
  */
 
 import { randomUUID } from 'node:crypto'
@@ -337,7 +337,7 @@ export class ProfileService {
 
     const k = TFS_ENV_KEYS
     const content = [
-      '# 由 @deepseek-ai/dsh-tfs-requirment 生成：TFS 连接凭据导出。',
+      '# 由 dsh-tfs-requirment 生成：TFS 连接凭据导出。',
       '# 含明文 PAT —— 请勿提交版本库、勿粘贴到聊天/工单。',
       '# 用途：凭据备份/迁移（本插件直连 REST，无需 source 本文件即可工作）。',
       `export ${k.url}='${view.url}'`,

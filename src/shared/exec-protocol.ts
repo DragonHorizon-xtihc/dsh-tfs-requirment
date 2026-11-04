@@ -11,7 +11,7 @@
  * 3. **关键产物清单**（问题 4）：子智能体在结尾用 `ARTIFACTS:` 段给出要归档的文件绝对路径，
  *    由 {@link parseArtifactPaths} 解析后上传为需求附件。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/exec-protocol
+ * @module dsh-tfs-requirment/shared/exec-protocol
  */
 
 /** 收口判定的三态：成功 / 失败 / 待人工确认（问题 5）。 */
@@ -126,11 +126,74 @@ export function findConfirmPhrase(output: string): { index: number; text: string
  * @param stopReason - 子 run 落定原因。
  * @param output - 子智能体最终输出文本（已抽取/截断均可）。
  */
-export function detectOutcome(stopReason: string | undefined, output: string | undefined): ExecOutcome {
-  if (stopReason !== 'completed') return 'failed'
+/**
+ * 输出里是否有「任务已实质交付」的证据（2026-11-04）。
+ *
+ * ## 为什么要引入这一维
+ *
+ * 协议第 6 条让子智能体只要报告里存在"必须人工确认后才能继续的事项"就输出
+ * `NEEDS_HUMAN_CONFIRM`。真实工程任务几乎总有这类遗留项（真机桌面端补测、TFS
+ * 状态流转、写门禁确认），于是模型在**已经交付完整报告与产物**后仍会输出该标记。
+ * 旧判据见标记就判 `needs_confirmation`，任务停在「待确认」，自动扫尾反复续跑，
+ * 最终主 agent 兜底无产出时把任务收口成 `failed` —— 表现为「所有子 Agent 完成后
+ * 都被标记失败」（真机 2059017：7 次 attempt 里 3 次 needs_confirmation、
+ * 1 次 sweep-main-agent-empty，只有人工确认才落 success）。
+ *
+ * 因此区分两种语义：
+ *   - **有交付证据**（TASK_DONE 独占一行，或 ARTIFACTS 段里有真实绝对路径）⇒
+ *     任务已经干完，末尾的确认请求只是**非阻塞遗留项**，按 `success` 收口并写进备注；
+ *   - **无交付证据、纯粹在等人拍板** ⇒ 才是真正的 `needs_confirmation`。
+ *
+ * 判据刻意保守：只认协议里两个"我交付了"的强信号，不靠长度或标题猜。
+ *
+ * @param output - 子智能体最终输出文本。
+ */
+export function hasDeliveredArtifacts(output: string | undefined): boolean {
   const text = output ?? ''
-  if (hasExplicitConfirmMarker(text) || findConfirmPhrase(text)) return 'needs_confirmation'
-  return 'success'
+  if (!text) return false
+  // 1) 完成标记必须独占一行（正文里提到 "TASK_DONE" 这个词不算）。
+  if (new RegExp(`^[ \\t]*${TASK_DONE_MARKER}[ \\t]*$`, 'm').test(text)) return true
+  // 2) ARTIFACTS: 段里至少一条真实绝对路径 —— 说明活干完并落了产物。
+  return parseArtifactPaths(text).length > 0
+}
+
+/** 收口评估结果：三态之外，附带「已交付但有非阻塞遗留项」的备注。 */
+export interface OutcomeAssessment {
+  /** 本次收口判定。 */
+  outcome: ExecOutcome
+  /** 任务已交付、但输出标注了需人工补做的遗留项；无遗留项时为 undefined。 */
+  deferredNote?: string
+}
+
+/**
+ * 评估一次子 run 的收口结果（在 {@link detectOutcome} 的三态之上补充遗留项备注）。
+ *
+ * 口径：
+ *   - stopReason ≠ 'completed' → `failed`；
+ *   - completed + 请求人工确认 + **有交付证据** → `success` + `deferredNote`
+ *     （任务已完成，遗留项不阻塞，写进备注供人查看）；
+ *   - completed + 请求人工确认 + 无交付证据 → `needs_confirmation`（真的卡住等人）；
+ *   - 其余 completed → `success`。
+ */
+export function assessOutcome(
+  stopReason: string | undefined,
+  output: string | undefined,
+): OutcomeAssessment {
+  if (stopReason !== 'completed') return { outcome: 'failed' }
+  const text = output ?? ''
+  const confirmation = hasExplicitConfirmMarker(text) || findConfirmPhrase(text) !== undefined
+  if (!confirmation) return { outcome: 'success' }
+  if (!hasDeliveredArtifacts(text)) return { outcome: 'needs_confirmation' }
+  const reason = extractHumanConfirmReason(text, 200)
+  return {
+    outcome: 'success',
+    deferredNote: `任务已交付；下列遗留项需人工补做（不阻塞本次完成）：${reason}`,
+  }
+}
+
+/** 判定一次子 run 的收口结果（{@link assessOutcome} 的三态视图）。 */
+export function detectOutcome(stopReason: string | undefined, output: string | undefined): ExecOutcome {
+  return assessOutcome(stopReason, output).outcome
 }
 
 /**
@@ -247,8 +310,8 @@ export function buildExecBudgetSection(budget?: { maxDepth?: number }): string {
     depthLine,
     '5. 简洁输出：回复聚焦结论与必要依据，不要逐字复述工具返回的大段内容，不要输出无意义的过程寒暄。',
     '6. 完成 / 人工确认协议（最重要，关系到流程能否正确流转）：',
-    `   - 任务确已完成：在最终回复的**最后单独一行**输出 ${TASK_DONE_MARKER}。`,
-    `   - 若存在必须由人工确认、人工拍板或人工验收后才能继续的事项（如需求口径需要人来决定、关键方案需要人认可），**不得把它当作已完成**：在最终回复的**最后单独一行**输出`,
+    `   - 任务确已完成：在最终回复的**最后单独一行**输出 ${TASK_DONE_MARKER}。若还有非阻塞的遗留事项（真机环境补测、TFS 状态流转、人工后续验收等），**仍按已完成收口**，在报告里单列「遗留事项」说明即可，不要因此改用 ${NEEDS_HUMAN_CONFIRM_MARKER}。`,
+    `   - 仅当任务**无法继续**、必须人先拍板才能往下做（需求口径未定、关键方案需人认可、写门禁拦住且无人确认）时，才不得当作已完成：在最终回复的**最后单独一行**输出`,
     `     ${NEEDS_HUMAN_CONFIRM_MARKER}: 需要人工确认/决定的具体内容`,
     '     系统会把任务停在「待人工确认」，不会自动进入下一个任务；人工确认通过后才继续。',
     `7. 关键产物归档：若本任务产出了需要归档到需求的文件（方案/报告/补丁/截图等），在最终回复中用如下段落列出其**真实存在的绝对路径**，每行一个，只列与本需求相关的关键产物、不要罗列依赖目录或无关文件：`,

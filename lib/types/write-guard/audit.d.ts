@@ -7,7 +7,7 @@
  * - 90 天滚动：提供 `rollOver()` 返回过期条目供归档，**不修改 live 日志**
  *   （live 保持 append-only；归档由调用方另行落盘 S-03）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/write-guard/audit
+ * @module dsh-tfs-requirment/write-guard/audit
  */
 import type { WriteOpType } from '../tfs/types.js';
 import { type FsLike } from '../persistence/fs-like.js';

@@ -10,7 +10,7 @@
  * `unknown` 读取、逐字段判型，任何非预期形态都**跳过而不抛错**（绝不能因为一条怪事件让整个
  * 任务详情白屏）。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/host/trace-mapper
+ * @module dsh-tfs-requirment/host/trace-mapper
  */
 import type { TaskTraceEntry, TaskTraceStats, TraceToolKind } from '../shared/contracts.js'
 import { sliceTextByCodePoint } from '../shared/text.js'

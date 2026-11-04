@@ -1,5 +1,5 @@
 /**
- * `@deepseek-ai/dsh-tfs-requirment` —— 宿主半入口。
+ * `dsh-tfs-requirment` —— 宿主半入口。
  *
  * 一个 DSH 插件的最小形态是这里的三个导出：`name`、`inject`、`apply`（外加 `Config`）。
  * 宿主半负责一切有状态、有权限的动作：**TFS REST 直连**、凭据 profile、看板状态持久化、
@@ -23,7 +23,7 @@
  * 审计可能只传空 warn —— 错误在 Web 下不可见，插件会静默消失。因此后续各阶段能力逐个
  * try/catch，单项失败只禁用那一项并把原因写进日志，绝不因为一个可选能力缺失让整个插件消失。
  *
- * @module @deepseek-ai/dsh-tfs-requirment
+ * @module dsh-tfs-requirment
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { Config } from './config.js';

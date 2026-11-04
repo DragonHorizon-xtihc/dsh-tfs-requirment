@@ -11,7 +11,7 @@
  *   - **US2**：已入池去重键集合（行内"已入池"标记的数据源）；
  *   - **US3**：目标 → 执行配置表单的自动填充。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/shared/pool
+ * @module dsh-tfs-requirment/shared/pool
  */
 import type { RequirementQueryOptions, RequirementSummary } from './contracts.js';
 /**

@@ -125,4 +125,27 @@ describe('summarizeRequirementExec（问题 4：需求行执行状态）', () =>
     ])
     expect(s).toEqual({ text: '已完成 2/2', tone: 'done' })
   })
+
+  /**
+   * 2026-11-04 真机 2059017：需求 execState 被显式写成 active，自动完成被抑制，
+   * 任务全 completed 却仍留在「进行中」页；状态列若还写"已完成"会自相矛盾。
+   */
+  it('需求显式 active + 任务全完成 ⇒ 待确认完成（不再谎称已完成）', () => {
+    const s = summarizeRequirementExec({ execState: 'active' }, [
+      t('completed', 'success'),
+      t('completed', 'success'),
+      t('deleted', 'cancelled'),
+    ])
+    expect(s).toEqual({ text: '待确认完成 2/2', tone: 'pending' })
+  })
+
+  it('需求级 completed 仍优先于任务状态', () => {
+    const s = summarizeRequirementExec({ execState: 'completed' }, [t('pending', 'queued')])
+    expect(s).toEqual({ text: '已完成', tone: 'done' })
+  })
+
+  it('显式 active 但任务全被取消 ⇒ 仍是「已全部取消」', () => {
+    const s = summarizeRequirementExec({ execState: 'active' }, [t('deleted', 'cancelled')])
+    expect(s).toEqual({ text: '已全部取消', tone: 'todo' })
+  })
 })

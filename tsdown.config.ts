@@ -14,7 +14,7 @@
  * 的 `PLATFORM_MODULES` 基线。本插件的客户端半仅运行期请求 `react` 与 `react/jsx-runtime`；
  * 其余为类型引用，列出无害。基线外的一切都内联，避免运行期请求模块表里不存在的行。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/tsdown
+ * @module dsh-tfs-requirment/tsdown
  */
 
 import type { UserConfig } from 'tsdown'
@@ -32,7 +32,7 @@ const PLATFORM_BASELINE = new Set([
 ])
 
 /** 插件 id（与 package.json name 一致，作为 __ModuleLoader__ 的行 id）。 */
-const PLUGIN_ID = '@deepseek-ai/dsh-tfs-requirment'
+const PLUGIN_ID = 'dsh-tfs-requirment'
 
 export default {
   name: `${PLUGIN_ID}/client`,

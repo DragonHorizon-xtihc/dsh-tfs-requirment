@@ -1,4 +1,4 @@
-# @deepseek-ai/dsh-tfs-requirment bundle patch
+# dsh-tfs-requirment bundle patch
 #
 # 把一个 loader 行插入 web profile 的插件名册。
 # （package.json 的 `dsh.bundle.patch` 指向本文件；宿主在 `packages/boot/app-boot/src/profile.ts:879`
@@ -6,7 +6,7 @@
 #
 # 安装（与仓库先例 @deepseek-ai/dsh-optimized-prompt / @deepseek-ai/dsh-cli-agents 一致）：
 #   1. $DSH_HOME/profiles/web/package.json 的 dependencies 加本插件（link:<绝对路径>）
-#   2. 同文件 dsh.profile.bundles 数组加入 "@deepseek-ai/dsh-tfs-requirment"
+#   2. 同文件 dsh.profile.bundles 数组加入 "dsh-tfs-requirment"
 #   3. dsh plugin add 建立 node_modules 软链
 #
 # ─────────────────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@
 
 - insert:
     - id: tfs-requirment
-      name: '@deepseek-ai/dsh-tfs-requirment'
+      name: 'dsh-tfs-requirment'
       config:
         # 目标集合清单（FR-025）。运行时可在清单内切换（FR-003）。
         collections: ['WN_HIS']

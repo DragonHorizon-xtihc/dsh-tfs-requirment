@@ -11,7 +11,7 @@
  *   ORDER BY [System.ChangedDate] DESC
  * 条数上限不走 WIQL TOP 关键字（WIQL 不支持），由 HTTP 参数 `$top` 控制。
  *
- * @module @deepseek-ai/dsh-tfs-requirment/tfs/wiql-builder
+ * @module dsh-tfs-requirment/tfs/wiql-builder
  */
 
 /** 一组 WIQL 查询条件（全部可选；字段间 AND，同字段多值 OR 即 IN）。 */

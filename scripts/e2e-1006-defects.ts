@@ -20,7 +20,7 @@
  *
  * 运行：`node <repo>/node_modules/tsx/dist/cli.mjs scripts/e2e-1006-defects.ts`
  *
- * @module @deepseek-ai/dsh-tfs-requirment/scripts/e2e-1006-defects
+ * @module dsh-tfs-requirment/scripts/e2e-1006-defects
  */
 
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
