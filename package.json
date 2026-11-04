@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-tfs-requirment",
+  "name": "@dragonhorizon-xtihc/dsh-tfs-requirment",
   "version": "0.1.0",
   "description": "TFS 需求驱动的 DSH 任务看板插件：拉取 TFS 需求 → 拆解任务 → 指派角色智能体执行 → 回写 TFS（标签/状态/评论/关联）。全部直连 TFS REST；凭据走 profile 隔离；写操作过四道门禁。",
   "type": "module",
