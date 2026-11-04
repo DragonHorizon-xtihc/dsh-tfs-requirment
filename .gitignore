@@ -1,6 +1,8 @@
 # 依赖与构建产物
+# 注意：lib/ 不忽略 —— 把构建产物提交入库，这样 `dsh plugin add github:...`
+# 安装时无需安装期脚本（pnpm 11 默认拦截这些脚本），也不会因为缺少
+# 构建产物导致 lib/index.js 加载失败。修改 src 后请重新构建并提交 lib/。
 node_modules/
-lib/
 *.tsbuildinfo
 
 # 凭据与环境（宪法 III：PAT 绝不进版本控制）
