@@ -84,6 +84,5 @@
     "react-dom": "^18.3.0",
     "tsdown": "*"
   },
-  "license": "MIT",
-  "private": true
+  "license": "MIT"
 }
