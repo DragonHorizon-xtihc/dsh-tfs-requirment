@@ -25,6 +25,14 @@
     "cordis.patch.yml",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DragonHorizon-xtihc/dsh-tfs-requirment.git"
+  },
+  "homepage": "https://github.com/DragonHorizon-xtihc/dsh-tfs-requirment#readme",
+  "bugs": {
+    "url": "https://github.com/DragonHorizon-xtihc/dsh-tfs-requirment/issues"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
