@@ -525,13 +525,14 @@ export class Board {
    * @param limit - 同时执行上限（FR-029，默认 3）。
    * @returns 本批可启动的任务 ID 列表。
    */
-  pickRunnable(limit: number): string[] {
+  pickRunnable(limit: number, requirementKey?: string): string[] {
     const running = Object.values(this.state.tasks).filter(t => t.execState === 'running').length
     if (running >= limit) return []
     const slots = limit - running
     if (slots <= 0) return []
     return Object.values(this.state.tasks)
-      .filter(t => t.state === 'pending' && this.isReady(t.taskId))
+      .filter(t => t.state === 'pending' && this.isReady(t.taskId)
+        && (requirementKey === undefined || t.requirementId === requirementKey))
       .sort((a, b) => a.taskId.localeCompare(b.taskId))
       .slice(0, slots)
       .map(t => t.taskId)
@@ -847,6 +848,9 @@ export class Board {
       if (fc.preset !== undefined && typeof fc.preset !== 'string') {
         throw new BoardError('frozenConfig.preset 必须是字符串')
       }
+      if (fc.workflow !== undefined && typeof fc.workflow !== 'string') {
+        throw new BoardError('frozenConfig.workflow 必须是字符串')
+      }
       for (const budgetKey of ['maxDepth', 'maxTokens'] as const) {
         const v = fc[budgetKey]
         if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < 0)) {
@@ -859,10 +863,13 @@ export class Board {
       const nextPreset = typeof fc.preset === 'string' ? fc.preset.trim() : ''
       const nextMaxDepth = typeof fc.maxDepth === 'number' && fc.maxDepth > 0 ? Math.floor(fc.maxDepth) : 0
       const nextMaxTokens = typeof fc.maxTokens === 'number' && fc.maxTokens > 0 ? Math.floor(fc.maxTokens) : 0
+      // 2026-10-29：工作流技能（诉求 4）与 skills 同属"整体替换"语义，空串不写键。
+      const nextWorkflow = typeof fc.workflow === 'string' ? fc.workflow.trim() : ''
       const same =
         task.frozenConfig.model === fc.model &&
         (task.frozenConfig.modelProvider ?? '') === nextProvider &&
         (task.frozenConfig.preset ?? '') === nextPreset &&
+        (task.frozenConfig.workflow ?? '') === nextWorkflow &&
         (task.frozenConfig.maxDepth ?? 0) === nextMaxDepth &&
         (task.frozenConfig.maxTokens ?? 0) === nextMaxTokens &&
         task.frozenConfig.mcp.join('\u0000') === fc.mcp.join('\u0000') &&
@@ -874,6 +881,7 @@ export class Board {
           model: fc.model,
           ...(nextProvider ? { modelProvider: nextProvider } : {}),
           ...(nextPreset ? { preset: nextPreset } : {}),
+          ...(nextWorkflow ? { workflow: nextWorkflow } : {}),
           ...(nextMaxDepth > 0 ? { maxDepth: nextMaxDepth } : {}),
           ...(nextMaxTokens > 0 ? { maxTokens: nextMaxTokens } : {}),
         }

@@ -29,7 +29,8 @@ function cfg(over: Partial<TfsRequirmentConfig> = {}): TfsRequirmentConfig {
     autoWriteBack: true,
     defaultMaxDepth: 1,
     defaultMaxTokens: 0,
-    runTimeoutMinutes: 30,
+    runTimeoutMinutes: 120,
+    runTimeoutGraceMinutes: 30,
     // spec 010 编排主 agent 新增配置（与 config.ts 默认值一致）。
     orchestratorEnabled: true,
     orchestratorProvider: '',

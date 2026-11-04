@@ -125,6 +125,14 @@ export class ChildSettleWatcher {
   /** childId → 本轮是否已观测到 running（避免把"尚未开工"当成已收口）。 */
   private readonly sawRunning = new Set<string>()
   /**
+   * childId → 最近一次观测到的事件数（2026-10-31：停滞超时判活跃度）。
+   *
+   * 复用会话的 turn 可能跑 88 分钟真活（2030877 现场：204 步、310 次工具调用），
+   * 绝对 30 分钟超时会把长任务误判为失败。改为**停滞超时**：只要事件数还在增长
+   * （本轮仍在产出），就不算停滞；连续 `timeoutMs` 无新事件才算卡死。
+   */
+  private readonly eventCounts = new Map<string, number>()
+  /**
    * childId → **无人等待时**收到的落定结果。
    *
    * 新建 continuable 子会话时，`startContinuableOn` 一返回就已经把 prompt 投出去、
@@ -178,13 +186,17 @@ export class ChildSettleWatcher {
    *
    * ⚠️ 必须在**投递消息之前**调用：事件可能同步到达，晚挂会永久漏掉。
    *
-* @param childId - 子会话 id。
-    * @param timeoutMs - 超时（毫秒）；超时返回 undefined。
-    * @param signal - 可选取消信号。
-    * @param opts - `mayHaveSettled`：调用方是在**本轮已经开始之后**才挂上来的（新建
-    *   continuable 子会话的路径），挂上来先取走同轮晚到的落定结果。
-    * @returns 落定结果；超时/取消返回 undefined。
-    */
+   * **超时语义（2026-10-31 修正）**：`timeoutMs` 是**停滞超时**（stall timeout），
+   * 不是绝对上限——只要会话事件数还在增长（本轮仍在产出），计时器就重置。
+   * 真正卡死（连续 `timeoutMs` 无新事件）才返回 undefined。绝对安全上限 = 8 倍。
+   *
+   * @param childId - 子会话 id。
+   * @param timeoutMs - 停滞超时（毫秒）；连续这么久无新事件才判卡死。
+   * @param signal - 可选取消信号。
+   * @param opts - `mayHaveSettled`：调用方是在**本轮已经开始之后**才挂上来的（新建
+   *   continuable 子会话的路径），挂上来先取走同轮晚到的落定结果。
+   * @returns 落定结果；停滞/取消返回 undefined。
+   */
   waitForChildSettle(
     childId: string,
     timeoutMs: number,
@@ -194,12 +206,15 @@ export class ChildSettleWatcher {
     if (!childId) return Promise.resolve(undefined)
     return new Promise<SubagentResult | undefined>(resolve => {
       let done = false
+      /** 绝对安全上限：无论如何不允许无限等（8 倍停滞超时）。 */
+      const absoluteDeadline = Date.now() + Math.max(timeoutMs * 8, 60 * 60_000)
       const finish = (r: SubagentResult | undefined): void => {
         if (done) return
         done = true
         clearTimeout(timer)
         if (timer2) clearInterval(timer2)
         signal?.removeEventListener('abort', onAbort)
+        this.eventCounts.delete(childId)
         const set = this.waiters.get(childId)
         if (set) {
           set.delete(finish)
@@ -212,13 +227,29 @@ export class ChildSettleWatcher {
       set.add(finish)
       this.waiters.set(childId, set)
 
-      const timer = setTimeout(() => finish(undefined), Math.max(1, timeoutMs))
-      // 兜底轮询：会话日志里出现新的 assistant 输出即视为落定（可重复调用，幂等）。
+      /**
+       * 停滞超时定时器（可被活动重置）。
+       * 初始计一次；每次轮询发现新事件时重置。
+       */
+      let timer = setTimeout(() => finish(undefined), Math.max(1, timeoutMs))
+      const resetStallTimer = (): void => {
+        clearTimeout(timer)
+        timer = setTimeout(() => finish(undefined), Math.max(1, timeoutMs))
+      }
+      // 兜底轮询：检测收口 + 活跃度（每 tick 重置停滞计时器）。
       const timer2 =
         this.deps.getSessionQuery && timeoutMs >= 1000
           ? setInterval(() => {
               if (done) return
-              void this.settleFromSessionLog(childId)
+              // 绝对安全上限。
+              if (Date.now() > absoluteDeadline) {
+                finish(undefined)
+                return
+              }
+              void this.settleFromSessionLog(childId).then(active => {
+                if (done) return
+                if (active) resetStallTimer()
+              })
             }, Math.max(2000, this.deps.pollIntervalMs ?? 15_000))
           : undefined
       signal?.addEventListener('abort', onAbort, { once: true })
@@ -255,18 +286,49 @@ export class ChildSettleWatcher {
   }
 
   /**
-   * 从会话日志兜底判定落定：只看**会话是否已停止产出**（`source !== 'live'`），
-   * 并把最后一条 assistant 文本作为输出。读不到/仍在跑 ⇒ 什么都不做（继续等或超时）。
+   * 从会话日志判定落定（2026-10-31 根因修复）。
+   *
+   * ## 旧实现的缺陷
+   *
+   * 只看 `source !== 'live'` —— 但**复用 continuable 会话为保持可续投而长期 live**，
+   * `live` 的语义是"连接活着"，不是"本轮还在输出"。于是 turn 2 干完 88 分钟真活、
+   * 日志里 `turn/end {turn:2, reason:completed}` 明明已出现，观测器却因 `source==='live'`
+   * 永远不认账，只能等 30 分钟超时误判失败（2030877 现场）。
+   *
+   * ## 现在的判定
+   *
+   * 以**本轮 turn 是否已结束**为准：扫描原始事件里的 `turn/start` / `turn/end`，
+   * 若最后一条 `turn/end` 的 turn 序号 >= 最后一条 `turn/start` 的 turn 序号，
+   * 说明本轮已收口（无论会话是否仍 live）。会话不再 live 时同样收尾（ONE-SHOT 冷读）。
+   *
+   * @returns 本轮是否有新事件产出（供上层停滞超时判断活跃度）。
    */
-  private async settleFromSessionLog(childId: string): Promise<void> {
+  private async settleFromSessionLog(childId: string): Promise<boolean> {
     const sq = this.deps.getSessionQuery?.() as SessionQueryLike | undefined
-    if (!sq || typeof sq.observeSession !== 'function') return
-    if (!this.waiters.has(childId)) return
+    if (!sq || typeof sq.observeSession !== 'function') return false
+    if (!this.waiters.has(childId)) return false
     try {
       const obs = await sq.observeSession(childId, { projectionMode: 'none' })
       try {
-        if (obs.source === 'live') return
-        const mapped = mapTraceEvents(obs.events ?? [])
+        const events = obs.events ?? []
+        // ── 活动检测：事件数增长 = 本轮仍在产出（供停滞超时用）。
+        const prevCount = this.eventCounts.get(childId) ?? 0
+        const active = events.length > prevCount
+        if (active) this.eventCounts.set(childId, events.length)
+        // ── turn/end 判定：本轮 turn 是否已收口。
+        let lastStartTurn = -1
+        let lastEndTurn = -1
+        for (const raw of events) {
+          const e = raw as { type?: unknown; data?: unknown }
+          const d = (e?.data ?? {}) as { turn?: unknown }
+          const turn = typeof d?.turn === 'number' ? d.turn : -1
+          if (e?.type === 'turn/start' && turn >= 0) lastStartTurn = turn
+          if (e?.type === 'turn/end' && turn >= 0) lastEndTurn = turn
+        }
+        const turnEnded = lastStartTurn >= 0 && lastEndTurn >= lastStartTurn
+        // 落定条件：本轮 turn 已结束，或会话已停止产出（冷读收尾）。
+        if (!turnEnded && obs.source === 'live') return active
+        const mapped = mapTraceEvents(events)
         let text = ''
         for (let i = mapped.entries.length - 1; i >= 0; i--) {
           const e = mapped.entries[i]
@@ -279,11 +341,13 @@ export class ChildSettleWatcher {
           stopReason: 'completed',
           output: text ? ([{ type: 'text', text }] as ContentBlock[]) : [],
         })
+        return active
       } finally {
         releaseObservation(obs)
       }
     } catch {
-      // 会话不可读（已清理 / 服务缺失）：继续等，直至超时降级。
+      // 会话不可读（已清理 / 服务缺失）：继续等，直至停滞超时降级。
+      return false
     }
   }
 }
@@ -296,6 +360,13 @@ export interface OrchestratorSessionDeps {
   board?: BoardService
   /** 取当前父 Agent（`SubagentStartRequest.parent` 必填，不可伪造）。 */
   getParent: () => Agent
+  /**
+   * 可选：同步链拿不到父会话时**现场准备**一个（2026-11-03，同 `HostApiDeps.ensureParent`）。
+   *
+   * 编排的每个动作（建会话 / 归纳 / 总结 / 追问）都要一个 live 父 Agent；用户关掉会话、
+   * dsh 重启后再触发这些动作，只有同步链就必然失败。缺省时退回 `getParent`。
+   */
+  ensureParent?: (workspace?: string) => Promise<Agent>
   /** 惰性取 sessionQuery（兜底观测）。 */
   getSessionQuery?: () => unknown
   /** 编排主 agent 使用的 provider 名；为空时取宿主第一个可用 provider。 */
@@ -319,6 +390,8 @@ export interface OrchestratorSessionDeps {
   reuseTaskSessions?: boolean
   /** 复用会话任务的收口观测超时（毫秒，AC3.4）。 */
   taskSettleTimeoutMs: number
+  /** 收口观测轮询间隔（毫秒；缺省 15s，测试可调小）。 */
+  pollIntervalMs?: number
   /** 并发槽借用/归还（与 ONE-SHOT 共用信号量，防止复用路径绕开并发上限）。 */
   slot?: { acquire: () => Promise<void>; release: () => void }
 }
@@ -413,8 +486,23 @@ export class OrchestratorSessionManager {
   constructor(private readonly deps: OrchestratorSessionDeps) {
     this.watcher = new ChildSettleWatcher(deps.ctx, {
       ...(deps.getSessionQuery ? { getSessionQuery: deps.getSessionQuery } : {}),
-      pollIntervalMs: 15_000,
+      ...(deps.pollIntervalMs ? { pollIntervalMs: deps.pollIntervalMs } : {}),
     })
+  }
+
+  /**
+   * 取父 Agent：先走同步链，失败时**现场准备**一个（恢复上次会话 / 新建）。
+   *
+   * 编排动作（建会话 / 归纳 / 总结 / 追问 / 释放）都发生在**异步、且可能晚于用户关闭会话**
+   * 的时刻（定时链、扫尾续跑、重启补跑）。只用同步 `getParent` 会在这些时刻必然失败，
+   * 而失败又被当成"编排能力不可用"记进 board，用户完全无法区分原因。
+   *
+   * @param workspace - 需求/任务的工作目录（新建会话时作为 cwd）。
+   * @throws 所有降级路径都失败时抛原错误（调用方按各自语义降级）。
+   */
+  private async resolveParent(workspace?: string): Promise<Agent> {
+    const ensure = this.deps.ensureParent
+    return ensure ? ensure(workspace) : this.deps.getParent()
   }
 
   /**
@@ -532,7 +620,7 @@ export class OrchestratorSessionManager {
 
     let parent: Agent
     try {
-      parent = this.deps.getParent()
+      parent = await this.resolveParent(input.workspace)
     } catch (e) {
       return fallback(`无法解析宿主 Agent 会话：${(e as Error).message}`)
     }
@@ -632,9 +720,14 @@ export class OrchestratorSessionManager {
     // 同 `finalizeOnce`：`finally { ac.abort() }` 保证异常退出时等待的定时器/轮询也被清掉。
     const ac = new AbortController()
     try {
-      const parent = this.deps.getParent()
-      // ⚠️ 先挂等待再投递：事件可能同步到达。
+      // ⚠️ 先挂等待再投递：事件可能同步到达。**父会话解析也必须排在挂等待之后** ——
+      // `ensure`/`getParent` 都可能 await，如果在挂等待之前解析，子会话在这段空窗里落定的
+      // 事件就收不到了（测试里 `emit` 紧跟 `summarize` 调用即命中此窗口）。
       const settled = this.watcher.waitForChildSettle(childId, this.deps.summarizeTimeoutMs, ac.signal)
+      // 归纳发生在任务落定之后（可能跨很多分钟）：父会话可能已被回收，走 ensure 链。
+      const parent = await this.resolveParent(
+        task.workspace ?? board.board?.snapshot?.requirements?.[requirementKey]?.workspace,
+      )
       await sendMessageOn(this.deps.ctx, parent, childId, [{ type: 'text', text: prompt }] as ContentBlock[], ac.signal)
       result = await settled
       if (!result) {
@@ -718,8 +811,11 @@ export class OrchestratorSessionManager {
     // 顺带把等待者从 watcher 上摘掉，避免它继续收到后续落定广播。
     const ac = new AbortController()
     try {
-      const parent = this.deps.getParent()
+      // 先挂等待（见 summarizeOnce 的同一注释：父会话解析可能要 await，不能抢在挂等待之前）。
       const settled = this.watcher.waitForChildSettle(childId, this.deps.finalizeTimeoutMs, ac.signal)
+      // 总结发生在全部任务落定之后（可能晚至几十分钟 / 跨一次 dsh 重启）：
+      // 父会话大概率已不在，走 ensure 链现场恢复或新建，否则总结永远返回 undefined。
+      const parent = await this.resolveParent(req?.workspace)
       await sendMessageOn(this.deps.ctx, parent, childId, [{ type: 'text', text: prompt }] as ContentBlock[], ac.signal)
       const result = await settled
       if (!result) return undefined
@@ -727,6 +823,69 @@ export class OrchestratorSessionManager {
       return text ? truncateText(text, 4000) : undefined
     } catch {
       return undefined
+    } finally {
+      ac.abort()
+    }
+  }
+
+  /**
+   * 向编排主 agent 发一条**决策/问答**消息并取回它的完整回复（2026-11-03 问题 7 扫尾）。
+   *
+   * 与 `summarize`/`finalize` 同一把串行锁（`orchestrator|<需求键>`）——三者打的都是
+   * 同一个 `orchestratorSessionId`，`ChildSettleWatcher` 按 childId 并发广播，不排队会让
+   * 一次落定同时唤醒多个等待者、互相拿错回复。
+   *
+   * 失败与超时**不抛错**：返回空串，由扫尾链路自行降级（如改走主 agent 亲做），
+   * 与本模块"降级是设计的一部分"的口径一致。
+   *
+   * @param requirementKey - 需求去重键。 @param prompt - 要发送的决策提示词。
+   * @param opts.timeoutMs - 等待回复的超时（缺省沿用 summarizeTimeoutMs）。
+   * @returns 主 agent 的回复正文（协议标记已剥离）；拿不到返回 ''。
+   */
+  async decide(
+    requirementKey: string,
+    prompt: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<string> {
+    const releaseTurn = await this.acquireReuseTurn(`orchestrator|${requirementKey}`)
+    try {
+      return await this.decideOnce(requirementKey, prompt, opts?.timeoutMs)
+    } finally {
+      releaseTurn()
+    }
+  }
+
+  /** `decide` 的串行化实体（gate 由 {@link OrchestratorSessionManager.decide} 持有）。 */
+  private async decideOnce(
+    requirementKey: string,
+    prompt: string,
+    timeoutMs?: number,
+  ): Promise<string> {
+    const board = this.deps.board
+    if (!board) return ''
+    const orch = board.getOrchestration(requirementKey)
+    const childId = orch?.orchestratorSessionId
+    if (!orch || orch.mode !== 'continuable' || !childId) return ''
+
+    const ac = new AbortController()
+    try {
+      // ⚠️ 先挂等待再投递：事件可能同步到达（同 summarizeOnce）。
+      const settled = this.watcher.waitForChildSettle(
+        childId,
+        timeoutMs && timeoutMs > 0 ? timeoutMs : this.deps.summarizeTimeoutMs,
+        ac.signal,
+      )
+      // 扫尾决策同样晚于用户会话（可能到点/重启后才触发）：走 ensure 链。
+      const parent = await this.resolveParent(
+        board.board?.snapshot?.requirements?.[requirementKey]?.workspace,
+      )
+      await sendMessageOn(this.deps.ctx, parent, childId, [{ type: 'text', text: prompt }] as ContentBlock[], ac.signal)
+      const result = await settled
+      if (!result) return ''
+      const text = stripProtocolMarkers(blocksToText(result.output))
+      return text ? truncateText(text, 4000) : ''
+    } catch {
+      return ''
     } finally {
       ac.abort()
     }
@@ -891,7 +1050,8 @@ export class OrchestratorSessionManager {
     if (ids.length === 0) return undefined
     let parent: Agent
     try {
-      parent = this.deps.getParent()
+      // 还原需求是典型的"事后"操作（任务早跑完 / dsh 重启过）：走 ensure 链。
+      parent = await this.resolveParent()
     } catch (e) {
       return `无法解析父会话以释放子会话：${(e as Error).message}`
     }
@@ -940,7 +1100,7 @@ export class OrchestratorSessionManager {
   }
 
   /**
-   * 把"等待落定"包成 `Promise<SubagentResult>`，并在落定时归还并发槽（AC3.4 的超时降级）。
+   * 把"等待落定"包成 `Promise<SubagentResult>`，并在落定时归还并发槽（AC3.4 的停滞超时降级）。
    */
   private toResult(
     settled: Promise<SubagentResult | undefined>,
@@ -952,9 +1112,8 @@ export class OrchestratorSessionManager {
         stopReason: 'error' as SubagentResult['stopReason'],
         output: [] as ContentBlock[],
         diagnostic:
-          `复用会话任务超过 ${Math.round(this.deps.taskSettleTimeoutMs / 60_000)} 分钟未观测到收口`
-          + `（task=${taskId}）。continuable 子会话没有 per-message result，完成只能靠事件/会话轮询观测；`
-          + '可能是子会话卡住、或宿主未提供可观测的收口信号。已按失败收口，可重试。',
+          `复用会话任务连续 ${Math.round(this.deps.taskSettleTimeoutMs / 60_000)} 分钟无新事件（停滞超时，task=${taskId}）。`
+          + '可能是子会话卡住（模型死循环 / 工具挂起）或宿主未提供可观测的收口信号。已按失败收口，可重试。',
       })
       .finally(release)
   }

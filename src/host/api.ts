@@ -23,6 +23,7 @@ import type { BoardService } from './board-service.js'
 import type { AuditArchive } from './audit-archive.js'
 import type { ProfileService } from './profile-service.js'
 import type { TaskTraceService } from './task-trace.js'
+import type { SkillGroupStore } from './skill-group-store.js'
 import type { SubagentProbeResult } from './subagent-access.js'
 import { runHealthCheck, type HealthProbePort } from './health.js'
 import { type DshCatalogService } from './dsh-catalog.js'
@@ -34,6 +35,12 @@ import {
   extractHumanConfirmReason,
   parseArtifactPaths,
 } from '../shared/exec-protocol.js'
+import {
+  buildContinuePrompt,
+  buildMainAgentCompletePrompt,
+  decideSweep,
+} from '../shared/sweep.js'
+import type { ScheduleService } from './scheduler.js'
 import type {
   ArchiveResult,
   AuditView,
@@ -62,7 +69,9 @@ import type {
   RequirementQueryOptions,
   RequirementWriteBackReport,
   RestoreResult,
+  ScheduleEntryView,
   SetRequirementExecStateInput,
+  SkillMcpGroup,
   TaskAction,
   TaskOpResult,
   TaskTraceResult,
@@ -75,6 +84,16 @@ import type {
   WriteOpType,
 } from '../shared/contracts.js'
 import { buildBriefSection, buildDigestSeed } from '../shared/brief.js'
+import { describeRunTimeout } from '../shared/run-timeout.js'
+import {
+  buildCapabilityPlanSection,
+  extractWorkflowSteps,
+  verifyCapabilityUsage,
+  type CapabilityMcpServer,
+  type CapabilitySkillBody,
+  type CapabilityVerification,
+  type ChildToolCall,
+} from '../shared/capability-plan.js'
 import type { OrchestratorSessionManager } from './orchestrator-session.js'
 
 /**
@@ -91,23 +110,44 @@ export function mapStopReasonToOutcome(stopReason: string | undefined): 'success
 /**
  * 在 subagents 服务可达的探测结果上，再前置校验「当前是否有可派发的顶层会话」（D7）。
  *
+ * 2026-11-03 修正：**"当前没有活跃会话"不等于"派发不了"**。只要宿主能现造一个会话
+ * （`sessionController.create`，见 `canPrepareParent`），就不该把编排能力判成不可用并拦住
+ * 用户 —— 旧行为在"从工作台直接发起"和"定时执行到点"两种场景下都是死路（后者还会因
+ * 调度器 at-most-once 直接丢任务）。
+ *
  * @param probe - {@link probeSubagents} 的现算结果（服务/工具/provider 是否就绪）。
  * @param getParent - 解析顶层父 Agent；无存活顶层会话时抛错（parent-resolver 同一判据）。
- * @returns 服务不可达则原样返回；服务可达但无顶层会话时降级为 available:false 并给出
- *          「请先开会话」的可操作提示，前端派发按钮据此禁用，而不是点完才在 dispatch 内失败。
+ * @param canPrepareParent - 能否在派发时准备出父会话（同步判定，无副作用）。
+ * @returns 服务不可达则原样返回；服务可达时：
+ *   - 有顶层会话 ⇒ 原样放行；
+ *   - 无但能准备 ⇒ available:true + `parentOnDemand:true`（面板给"派发时自动准备"的提示）；
+ *   - 无且不能准备 ⇒ 降级 available:false + 「请先开会话」的可操作提示，前端据此禁用。
  */
 export function gateProbeByParent(
   probe: SubagentProbeResult,
   getParent: () => unknown,
+  canPrepareParent?: () => boolean,
 ): SubagentProbeResult {
   if (!probe.available) return probe
   try {
     getParent()
     return probe
   } catch (e) {
+    let prepare = false
+    try {
+      prepare = canPrepareParent?.() === true
+    } catch {
+      prepare = false
+    }
+    if (prepare) {
+      return { ...probe, available: true, parentOnDemand: true }
+    }
     return {
       available: false,
       providers: probe.providers,
+      // 保留派发通道信息：本层阻断的是"没有顶层会话"，不是"没有派发 API"，
+      // 面板据此仍能显示走的是 startActivation 还是 start（诊断时不必再猜）。
+      ...(probe.api ? { api: probe.api } : {}),
       reason: `当前没有可派发的顶层会话（${(e as Error).message}）——请先在主会话中开始一轮对话/打开会话后，再发起执行`,
     }
   }
@@ -202,6 +242,10 @@ export interface DispatchResult {
   createdTask?: boolean
   /** 本次派发实际生效的工作目录（问题 1；UI 据此如实显示"代码库在哪"，而不是显示面板里选的值）。 */
   workspace?: string
+  /** true = 已登记为定时执行（问题 4）：到 `scheduledAt` 才真正派发，此刻不建任务。 */
+  scheduled?: boolean
+  /** 定时派发的到点时刻（ISO 8601，精确到分；仅 scheduled=true 时有）。 */
+  scheduledAt?: string
 }
 
 /**
@@ -236,6 +280,11 @@ export interface RequirementFinalizerPort {
 export interface HostApiDeps {
   /** 角色存储（读 roles.json）。 */
   roles: Pick<RoleStore, 'list' | 'getByName' | 'save' | 'delete'>
+  /**
+   * 技能/MCP 分组存储（skill-groups.json，2026-11-03 用户诉求）。
+   * 缺省（未接线）时 `getPanelData` 不下发 `skillGroups`、保存/删除返回能力降级。
+   */
+  skillGroups?: Pick<SkillGroupStore, 'list' | 'save' | 'delete'>
   /** TFS 适配层（REST 直连；写操作唯一出口）。 */
   adapter: TfsAdapter
   /** 需求并发分发器。 */
@@ -243,7 +292,13 @@ export interface HostApiDeps {
     Partial<
       Pick<
         RequirementDispatcher,
-        'activeCount' | 'queuedCount' | 'getRun' | 'consumeTimeout' | 'forget' | 'cancel'
+        | 'activeCount'
+        | 'queuedCount'
+        | 'getRun'
+        | 'consumeTimeout'
+        | 'takeTimeoutDetail'
+        | 'forget'
+        | 'cancel'
       >
     >
   /**
@@ -259,6 +314,26 @@ export interface HostApiDeps {
   }
   /** 取当前宿主 Agent（SubagentStartRequest.parent 必填）。 */
   getParent: () => Agent
+  /**
+   * 可选：**现场准备**一个父会话（2026-11-03 定时执行报错修复）。
+   *
+   * `getParent` 的同步链只看"**此刻**有没有存活的顶层会话"，于是：
+   *   - 用户从「工作台」直接发起（没开过聊天会话）⇒ 必然被拦；
+   *   - 定时执行**到点**那一刻，会话早关了 / dsh 重启过 ⇒ 必然失败（而调度器 at-most-once，
+   *     失败即任务丢失）。
+   * `ensureParent` 在这两种情况下恢复上次会话或新建一个（`host/parent-resolver.ts#ensure`）。
+   * 缺省（未接线）时行为与旧版一致：只走同步解析。
+   *
+   * @param workspace - 期望的会话工作目录（子会话继承父目录，故传任务工作目录）。
+   */
+  ensureParent?: (workspace?: string) => Promise<Agent>
+  /**
+   * 可选：当前能否在需要时准备出父会话（同步判定、无副作用，供面板探测用）。
+   *
+   * 为 true 时"当前没有活跃会话"不再把编排能力判成不可用 —— 面板改成
+   * "无活跃会话，派发时自动准备"的提示，按钮照常可点。
+   */
+  canPrepareParent?: () => boolean
   /**
    * 可选：解析某角色被哪些任务引用（T057 删除保护）。缺省视为无引用。
    * @param roleName - 角色展示名。
@@ -295,6 +370,43 @@ export interface HostApiDeps {
    * 故门禁保障变成结构性的，已无黑名单的必要。字段保留仅为兼容既有单测。
    */
   tfsToolDeny?: () => { allow?: readonly string[]; deny?: readonly string[] }
+  /**
+   * 读取技能正文（宿主 `ctx.skills.get(name).content`）。
+   *
+   * 2026-10-29（诉求 3/4）：所选技能必须**真的**作用于子 agent。宿主的
+   * `SubagentStartRequest` 没有工具/技能限制字段（见 `shared/capability-plan.ts` 注释），
+   * 因此唯一可靠的通道是"把技能正文整篇写进子 agent 首条 prompt"。缺省（未接线）时
+   * 仍下发技能名与调用纪律，只是没有正文可附。
+   */
+  loadSkillBodies?: (names: readonly string[]) => Promise<CapabilitySkillBody[]>
+  /**
+   * 宿主当前注册的工具全名清单（`ctx.tools.schemas().map(s => s.name)`）。
+   *
+   * 用途：把用户勾选的 MCP server 名映射成真实工具名 `mcp__<server>__<tool>`；
+   * 一个**没有注册任何工具**的 server 会在派发前被拒，而不是"选了但静默不生效"。
+   */
+  listToolNames?: () => string[]
+  /**
+   * 读取子会话的 `tool/call` 事件（落定后验收所选技能 / MCP 是否真被使用）。
+   * 返回 `undefined` 表示"无法观测"（跳过验收），返回 `[]` 表示"确实一次工具都没调"。
+   */
+  readChildToolCalls?: (sessionId: string) => Promise<ChildToolCall[] | undefined>
+  /**
+   * 读取子会话**真实工具表**（`request/header` 里的工具名并集）。
+   *
+   * 2026-10-30：用于戳穿"工具未注入"的谎报——现场子代理声称 MCP 未注入，
+   * 但其请求工具表里 `mcp__tfs-mcp__*` 全在。返回 `undefined` = 无法核实（不据此判罚）。
+   */
+  readChildToolNames?: (sessionId: string) => Promise<string[] | undefined>
+  /** 技能调用工具名（宿主 `dsh-tool-skill` 默认注册为 `skill`）。 */
+  skillToolName?: string
+  /**
+   * 宿主半插件的加载时刻（ISO；2026-10-29 诊断字段）。
+   *
+   * 用途：面板显示"当前运行的宿主代码是什么时候加载的"。重新构建 `lib/` 后不重启 dsh，
+   * 插件仍跑旧模块，而旧文案看起来完全"正常"（本次事故就是：构建产物已更新、报错仍是旧句）。
+   */
+  pluginLoadedAt?: string
   /** 默认集合。 */
   collection: string
   /**
@@ -373,7 +485,19 @@ export interface HostApiDeps {
    * 缺省时本模块**完全退回 010 之前的语义**：不做归纳、不做 AI 最终总结、prompt 仍用
    * 「工作目录 → 需求提示词 → 任务正文」。这样老装配与精简部署不会因缺能力而报错。
    */
-  orchestrator?: Pick<OrchestratorSessionManager, 'ensure' | 'summarize' | 'finalize'>
+  orchestrator?: Pick<OrchestratorSessionManager, 'ensure' | 'summarize' | 'finalize' | 'decide'>
+  /**
+   * 定时执行调度器（2026-11-03 问题 4/5；`index.ts` 以 `ScheduleService` 注入）。
+   * 缺省 = 未装配：`schedule.mode:'at'` 的派发/编排登记被拒（fail loud，不静默立即跑）。
+   */
+  scheduler?: Pick<ScheduleService, 'schedule' | 'cancel' | 'list'>
+  /**
+   * 主 agent 扫尾开关（2026-11-03 问题 7）。缺省 true（本次诉求的默认行为）。
+   * 关闭后退回"停在待人工确认/失败、等用户手动处理"的旧口径。
+   */
+  sweepEnabled?: boolean
+  /** 单任务扫尾续跑轮数上限（超过转主 agent 亲做；缺省 2）。 */
+  sweepMaxRounds?: number
   /**
    * 是否复用任务子会话（spec 010 AC3.3）。缺省 false（沿用 ONE-SHOT）。
    *
@@ -448,6 +572,12 @@ export interface HostApi {
   saveRole(role: RoleDefinition): { ok: boolean; reason?: string }
   /** 删除角色（US5 / T057）。 */
   deleteRole(id: string, force?: boolean): { ok: boolean; reason?: string; references?: string[] }
+  /** 技能/MCP 分组清单（2026-11-03 用户诉求）。 */
+  listSkillGroups(): SkillMcpGroup[]
+  /** 保存/更新技能/MCP 分组（同名=覆盖）。 */
+  saveSkillGroup(group: SkillMcpGroup): { ok: boolean; reason?: string }
+  /** 删除技能/MCP 分组。 */
+  deleteSkillGroup(id: string): { ok: boolean; reason?: string }
   /** 看板快照（US3 任务中心 / US6 恢复）。 */
   getBoard(): BoardSnapshotView
   /** 领取需求入本地池（US2 / T036）+ 打 dsh 标签（T048）。 */
@@ -459,6 +589,22 @@ export interface HostApi {
   decomposeRequirement(
     requirementId: string,
   ): Promise<{ ok: boolean; taskIds?: string[]; created?: number; skipped?: number; createdRoles?: string[]; reason?: string }>
+  /**
+   * 开始编排（2026-11-03 问题 4/5）：立刻按依赖顺序启动该需求的子 Agent 链，
+   * 或登记为定时启动（精确到分，持久化 + 重启补跑）。`sequential:true` 时上个任务完成才编排下个。
+   */
+  orchestrationStart(input: {
+    requirementKey: string
+    mode: 'now' | 'at'
+    dueAt?: string
+    sequential?: boolean
+  }): Promise<{ ok: boolean; reason?: string; scheduledAt?: string }>
+  /** 调度条目清单（问题 4/5 定时执行可视化；2026-11-03 问题 3 归一为 UI 视图）。 */
+  listSchedules(): ScheduleEntryView[]
+  /** 取消一条调度。 */
+  cancelSchedule(id: string): boolean
+  /** 修改一条调度的到点时刻（2026-11-03 问题 3；同 id 覆盖 + 重新武装）。 */
+  updateSchedule(id: string, dueAt: string): { ok: boolean; reason?: string; scheduledAt?: string }
   /** 还原已领取需求回需求池（问题 7；名下仍有未取消任务时拒绝）。 */
   restoreRequirement(requirementKey: string): Promise<RestoreResult>
   /** 实时重取需求四段正文并回写看板（问题 11）。 */
@@ -587,6 +733,8 @@ export function createHostApi(deps: HostApiDeps): HostApi {
       presets: catalog?.presets ?? [],
       providers: catalog?.providers ?? [],
       skillOptions: catalog?.skills ?? [],
+      // 技能/MCP 分组（2026-11-03）：每次请求现读 store（分组改动少、量小，不缓存）。
+      ...(deps.skillGroups ? { skillGroups: deps.skillGroups.list() } : {}),
       tagSuggestions: deps.tagSuggestions,
       // 集合清单至少含当前集合：否则 UI 的切换器会出现"当前值不在选项里"的空选中态。
       collections: deps.collections?.length ? deps.collections : [deps.collection],
@@ -594,12 +742,21 @@ export function createHostApi(deps: HostApiDeps): HostApi {
       dispatchConcurrency: deps.dispatchConcurrency ?? 3,
       // 问题 1/2：把目录采集的降级原因透出（"技能为空"要能区分"没装"与"没采到"）。
       ...(catalog ? { catalogWarnings: catalog.warnings, catalogCollectedAt: catalog.collectedAt } : {}),
+      // 宿主半模块加载时刻：用于判断"重新构建后到底有没有重启"。
+      ...(deps.pluginLoadedAt ? { pluginLoadedAt: deps.pluginLoadedAt } : {}),
       // US4 编排能力：每次请求现算（`subagents` 服务是否真的可用），让面板在点击前就能
       // 如实提示"派不了"，而不是让用户点了才收到一句"服务不可用"。
       // D7：在服务可达之外，再前置校验「当前是否有可派发的顶层会话」——无会话时 parent-resolver
       // 必然失败，这里提前把 available 置 false 并给出"先开会话"的可操作提示，按钮据此禁用。
       ...(deps.probeOrchestration
-        ? { orchestration: gateProbeByParent(deps.probeOrchestration(), deps.getParent) }
+        ? {
+            orchestration: gateProbeByParent(
+              deps.probeOrchestration(),
+              deps.getParent,
+              // "当前没有活跃会话"不该判死：能现造就一直可用（见 gateProbeByParent 注释）。
+              deps.canPrepareParent,
+            ),
+          }
         : {}),
       // 需求池/任务中心标题拼 TFS 需求页的兜底地址（只含 url，绝不含 PAT）。
       // 每次调用现取：档案会在运行期被切换（`deps` 是值捕获，缓存下来会拿旧地址）。
@@ -703,13 +860,28 @@ export function createHostApi(deps: HostApiDeps): HostApi {
     // 造成"选火山方舟却跑英伟达"）。
     const modelRoute = resolveFrozenModelRoute({ frozen: input.draft.frozenConfig, role })
     const draftPreset = typeof input.draft.preset === 'string' ? input.draft.preset.trim() : ''
+    const draftSkills = input.draft.frozenConfig?.skills?.length
+      ? input.draft.frozenConfig.skills
+      : (role.defaultSkills ?? [])
+    // 2026-10-29（诉求 4）：工作流技能必须落在本次技能清单内 —— 工作流就是一种技能，
+    // 指向一个没勾选的技能会同时导致"取不到正文"与"生成无依据的强制流程"。
+    const draftWorkflow = typeof input.draft.frozenConfig?.workflow === 'string'
+      ? input.draft.frozenConfig.workflow.trim()
+      : ''
+    if (draftWorkflow.length > 0 && !draftSkills.includes(draftWorkflow)) {
+      return {
+        ok: false,
+        reason: `工作流「${draftWorkflow}」不在本次技能选择内：工作流从技能中选择，请先在「技能」里勾选它`,
+      }
+    }
     const frozenConfig: FrozenConfig = {
       mcp: input.draft.frozenConfig?.mcp?.length ? input.draft.frozenConfig.mcp : (role.defaultMcp ?? []),
-      skills: input.draft.frozenConfig?.skills?.length ? input.draft.frozenConfig.skills : (role.defaultSkills ?? []),
+      skills: draftSkills,
       model: modelRoute.model,
       ...(modelRoute.modelProvider ? { modelProvider: modelRoute.modelProvider } : {}),
       // 问题 3/1：预设与执行预算随任务冻结落库（空串/0 不写键，保持旧 JSON 形状）。
       ...(draftPreset ? { preset: draftPreset } : {}),
+      ...(draftWorkflow ? { workflow: draftWorkflow } : {}),
       ...(input.draft.maxDepth && input.draft.maxDepth > 0 ? { maxDepth: Math.floor(input.draft.maxDepth) } : {}),
       ...(input.draft.maxTokens && input.draft.maxTokens > 0 ? { maxTokens: Math.floor(input.draft.maxTokens) } : {}),
     }
@@ -756,16 +928,75 @@ export function createHostApi(deps: HostApiDeps): HostApi {
     }
 
     /**
-     * 先解析真实 parent Agent，**再**创建/启动看板任务（2026-09-21 假执行事故修复点）。
+     * 问题 4（2026-11-03）：定时执行 —— 校验通过后**先登记调度，不建任务不派发**。
+     *
+     * 放在校验后、建任务前：角色/目标等错误当场暴露（fail fast），而看板任务留到
+     * 到点真正派发时再创建（避免"任务已建但人还没到点"的半执行假象）。
+     * 到点后调度器回调 `dispatch` 同一入参（schedule 已是 'now' 语义），走完正常链路。
+     */
+    const schedule = input.draft.schedule
+    if (schedule?.mode === 'at') {
+      const dueAt = schedule.dueAt ?? ''
+      const dueMs = Date.parse(dueAt)
+      if (Number.isNaN(dueMs)) return { ok: false, reason: '定时时间无效（不是合法 ISO 时间）' }
+      if (dueMs <= Date.now()) return { ok: false, reason: '定时时间必须晚于当前时间' }
+      if (!deps.scheduler) {
+        return { ok: false, reason: '调度器未装配（插件与宿主版本不匹配）：无法登记定时执行' }
+      }
+      const entryId = `dispatch:${input.taskId ?? requirementKey}:${Date.now()}`
+      const reg = deps.scheduler.schedule({
+        id: entryId,
+        dueAt,
+        kind: 'dispatch',
+        payload: { ...input, draft: { ...input.draft, schedule: { mode: 'now' } } },
+        note: `定时执行：${nonEmptyString(input.draft.title) ?? input.draft.roleName}`,
+      })
+      if (!reg.ok) return { ok: false, reason: reg.reason ?? '登记定时执行失败' }
+      // 2026-11-03 问题 3：把实际生效的工作目录一并回带 —— 否则执行面板无从显示
+      // "用的是哪个目录"，会误报"未指定工作目录"（定时分支此前不回带 workspace）。
+      return {
+        ok: true,
+        scheduled: true,
+        scheduledAt: dueAt,
+        ...(input.taskId ? { taskId: input.taskId } : {}),
+        ...(input.draft.workspace ? { workspace: input.draft.workspace } : {}),
+      }
+    }
+
+    /**
+     * 工作目录取值链（问题 1，2026-09-21 修复）。
+     *
+     * 优先级：**面板显式选择** > **看板任务自身的 workspace** > **需求级 workspace**。
+     *
+     * 旧实现只取 `boardTask?.workspace`：从「执行配置」发起执行时根本没有看板任务
+     * （`input.taskId` 为空）⇒ 整段【工作目录】**完全不出现**在 prompt 里 ⇒ 子代理按进程 cwd
+     * （父会话工作区）干活，用户看到的就是"任务上明明设了工作区，子代理却在另一个工程里改代码"。
+     * 同时 `draft.workspace`（面板里选的工作区）此前是**死字段**（从未被读取），也一并接上。
+     *
+     * 2026-11-03：这一段**上移到 parent 解析之前** —— `ensureParent` 需要用它在"没有活跃会话"
+     * 时新建一个以该目录为 cwd 的会话（子会话继承父会话目录，否则子代理会在错误工程里干活）。
+     * 这段只读 board 快照与入参，不产生任何状态变更，前移安全。
+     */
+    const requirementWorkspace = deps.board?.board?.snapshot?.requirements?.[requirementKey]?.workspace
+    const explicitWorkspace = nonEmptyString(input.draft.workspace)
+    const workspace = normalizeWorkspace(
+      explicitWorkspace ?? boardTask?.workspace ?? requirementWorkspace ?? '',
+    )
+
+    /**
+     * 解析真实 parent Agent，**然后**才创建/启动看板任务（2026-09-21 假执行事故修复点）。
      *
      * 为什么顺序不能反：`parent` 拿不到时（宿主无存活会话 / 不在 agent 调用链上），
      * 若已把任务置为 `in_progress/running`（或建了一条注定派不出去的手工任务），看板就会显示
      * "执行中"/多一条悬空任务，而子 agent 从未创建 —— 这正是"假执行"的用户可见形态。
      * 拿不到 parent 就**拒绝派发且不碰状态**，让"未派发"在 UI 上如实呈现。
+     *
+     * 2026-11-03：先 `ensureParent`（同步链失败时恢复/新建会话），再退回同步 `getParent`。
+     * 这一步是"定时执行到点"能跑通的关键 —— 到点时用户会话通常早已不在。
      */
     let parent: Agent
     try {
-      parent = deps.getParent()
+      parent = deps.ensureParent ? await deps.ensureParent(workspace) : deps.getParent()
     } catch (e) {
       return { ok: false, reason: `派发前置条件不满足：${(e as Error).message}` }
     }
@@ -793,22 +1024,6 @@ export function createHostApi(deps: HostApiDeps): HostApi {
         // best-effort：编排是增强能力，派发才是主路径。
       }
     }
-
-    /**
-     * 工作目录取值链（问题 1，2026-09-21 修复）。
-     *
-     * 优先级：**面板显式选择** > **看板任务自身的 workspace** > **需求级 workspace**。
-     *
-     * 旧实现只取 `boardTask?.workspace`：从「执行配置」发起执行时根本没有看板任务
-     * （`input.taskId` 为空）⇒ 整段【工作目录】**完全不出现**在 prompt 里 ⇒ 子代理按进程 cwd
-     * （父会话工作区）干活，用户看到的就是"任务上明明设了工作区，子代理却在另一个工程里改代码"。
-     * 同时 `draft.workspace`（面板里选的工作区）此前是**死字段**（从未被读取），也一并接上。
-     */
-    const requirementWorkspace = deps.board?.board?.snapshot?.requirements?.[requirementKey]?.workspace
-    const explicitWorkspace = nonEmptyString(input.draft.workspace)
-    const workspace = normalizeWorkspace(
-      explicitWorkspace ?? boardTask?.workspace ?? requirementWorkspace ?? '',
-    )
 
     /**
      * 问题 6：「执行配置 → 发起执行」必须**落地为看板任务**，否则这次执行在任务中心里
@@ -873,7 +1088,11 @@ export function createHostApi(deps: HostApiDeps): HostApi {
      * 注意 `deps.board` 可能是测试桩（只有 snapshot/setTaskState）：这里全程可选链，
      * 拿不到需求记录时只少一段，不让派发失败。
      */
-    const requirementPrompt = deps.board?.board?.snapshot?.requirements?.[requirementKey]?.prompt
+    // 需求级提示词：`draft.requirementPrompt`（执行配置页带入/微调的本次覆盖，2026-11-03 问题 1/3）
+    // 优先，缺省实时读看板 `Requirement.prompt`（用户改了需求提示词后未派发任务立刻采用新值）。
+    const requirementPrompt = (typeof input.draft.requirementPrompt === 'string' && input.draft.requirementPrompt.trim().length > 0
+      ? input.draft.requirementPrompt.trim()
+      : deps.board?.board?.snapshot?.requirements?.[requirementKey]?.prompt)
     const freshBoardTask = createdTask
       ? deps.board?.snapshot().tasks.find(t => t.taskId === taskId)
       : boardTask
@@ -993,6 +1212,189 @@ export function createHostApi(deps: HostApiDeps): HostApi {
     })
   }
 
+  /**
+   * 把一段 Markdown 追加到 prompt 的**最后一个 text 块**末尾（没有则新增一块）。
+   *
+   * 与 {@link withBudgetSection} 同一手法：保持 ContentBlock 数组形状不变，
+   * 避免同一件事在两处各写一遍拼接逻辑（顺序/空行迟早漂移）。
+   */
+  function appendPromptSection(prompt: ContentBlock[], section: string): ContentBlock[] {
+    if (!section) return prompt
+    const lastText = (() => {
+      for (let i = prompt.length - 1; i >= 0; i--) {
+        const b = prompt[i]
+        if (b && typeof b === 'object' && (b as { type?: string }).type === 'text') return i
+      }
+      return -1
+    })()
+    if (lastText === -1) return [...prompt, { type: 'text', text: section } as ContentBlock]
+    return prompt.map((b, i) => {
+      if (i !== lastText) return b
+      const prev = (b as { text?: string }).text ?? ''
+      return { ...(b as object), text: `${prev}\n\n${section}` } as ContentBlock
+    })
+  }
+
+  /**
+   * 解析"所选技能 / MCP / 工作流"并生成强制段（诉求 3 / 4 的下发侧）。
+   *
+   * ## 为什么"选了就必须真的用上"要靠这里
+   *
+   * 宿主没有 per-child 工具限制通道（`SubagentStartRequest` 无 `toolFilter`；
+   * `ctx.tools.restrict()` 只接受 scoped 上下文），所以插件能做的最强约束是两段：
+   *   1. **下发**：技能正文 + MCP 真实工具全名 + 工作流逐步纪律写进子 agent 首条 prompt；
+   *   2. **验收**：落定后读子会话 `tool/call`，核对是否真用上了（{@link verifyRunCapabilities}）。
+   *
+   * ## 分级处理（为什么不一律硬失败）
+   *
+   * 真实部署里角色的 `defaultMcp` / `defaultSkills` 常带**历史值**（本机 roles.json 的
+   * `tfs-mcp` 就是 2026-09-19 已下线的实例，`brainstorming` 等技能也未必装在全局层）。
+   * 若把"取不到正文 / 没注册工具"一律判成派发失败，一次历史配置就能把所有派发打死。
+   * 因此只有**用户显式要求且无法降级**的情况才硬失败：
+   *
+   * | 情况 | 处理 |
+   * |---|---|
+   * | 工作流技能取不到正文 | **硬失败**（"按该技能流程执行"这个要求会变成空话） |
+   * | 工作流不在技能清单内 | **硬失败**（自相矛盾的配置） |
+   * | 其它所选技能取不到正文 | 降级：仍下发名字 + "必须先调用 skill 工具加载"的纪律 |
+   * | 所选 MCP 有注册工具 | 下发真实工具全名 + 强制调用 + 落定验收 |
+   * | 所选 MCP 无注册工具 | 降级：从强制清单排除，并在 prompt 里显式声明"不可用" |
+   *
+   * @param frozen - 本次生效的冻结配置。
+   * @returns 强制段 + 验收所需的计划；无法满足时给出可读原因。
+   */
+  async function resolveCapabilityPlan(
+    frozen: FrozenConfig,
+  ): Promise<
+    | { ok: true; section: string; plan?: { skills: string[]; mcp: string[]; workflow?: string; steps: string[] } }
+    | { ok: false; reason: string }
+  > {
+    const skillNames = [...new Set((frozen.skills ?? []).filter(s => typeof s === 'string' && s.trim().length > 0))]
+    const mcpNames = [...new Set((frozen.mcp ?? []).filter(s => typeof s === 'string' && s.trim().length > 0))]
+    const workflow = typeof frozen.workflow === 'string' ? frozen.workflow.trim() : ''
+    if (skillNames.length === 0 && mcpNames.length === 0 && workflow.length === 0) {
+      return { ok: true, section: '' }
+    }
+    // 工作流必须是所选技能之一：否则既加载不到正文，又会生成一份"无正文可依"的强制流程。
+    if (workflow.length > 0 && !skillNames.includes(workflow)) {
+      return {
+        ok: false,
+        reason: `工作流「${workflow}」不在该任务的技能清单内：工作流从技能中选择，请先勾选该技能`,
+      }
+    }
+
+    // ① 技能正文：取不到**不直接判失败**（技能可能只在子会话自己的作用域可见，
+    //    宿主的 skill 工具仍能加载它）；但工作流技能取不到正文 ⇒ 硬失败，
+    //    因为"按该技能流程执行"这个要求本身就是空的。
+    let bodies: CapabilitySkillBody[] = []
+    if (deps.loadSkillBodies && skillNames.length > 0) {
+      try {
+        bodies = await deps.loadSkillBodies(skillNames)
+      } catch (e) {
+        return { ok: false, reason: `读取技能正文失败：${(e as Error).message}` }
+      }
+    } else {
+      // 未接线（测试桩 / 旧装配）：保留名字，正文缺省。
+      bodies = skillNames.map(name => ({ name, content: '' }))
+    }
+    const available = new Set(bodies.map(b => b.name))
+    // 补齐读不到正文的技能：仍下发名字 + "必须先加载"的纪律。
+    for (const name of skillNames) {
+      if (!available.has(name)) bodies.push({ name, content: '' })
+    }
+    if (workflow.length > 0) {
+      const wfBody = bodies.find(b => b.name === workflow)?.content ?? ''
+      if (wfBody.trim().length === 0) {
+        return {
+          ok: false,
+          reason: `工作流技能「${workflow}」取不到正文，无法生成强制流程：`
+            + '请确认该技能已安装（技能目录可见）或改选其它技能作为工作流',
+        }
+      }
+    }
+
+    // ② MCP 真实工具名：注册了工具的才进入"强制清单"；没注册的降级为 prompt 里的
+    //    一句明确声明（不硬失败）—— 角色的 defaultMcp 里常留有已下线实例，
+    //    一旦硬失败会把整条派发打死，那不是用户想要的结果。
+    const mcp: CapabilityMcpServer[] = []
+    const unusableMcp: string[] = []
+    if (mcpNames.length > 0) {
+      const toolNames = deps.listToolNames?.() ?? []
+      for (const server of mcpNames) {
+        const prefix = `mcp__${server}__`
+        const tools = toolNames.filter(n => typeof n === 'string' && n.startsWith(prefix))
+        if (tools.length > 0) mcp.push({ server, tools })
+        else if (deps.listToolNames) unusableMcp.push(server)
+        else mcp.push({ server, tools: [] })
+      }
+    }
+
+    // ③ 工作流步骤：从技能正文解析（解析不到则按"整篇即流程"下发纪律）。
+    const workflowBody = workflow.length > 0 ? bodies.find(b => b.name === workflow)?.content ?? '' : ''
+    const steps = workflow.length > 0 ? extractWorkflowSteps(workflowBody) : []
+    const section = buildCapabilityPlanSection({
+      skills: bodies,
+      mcp,
+      ...(unusableMcp.length > 0 ? { unusableMcp } : {}),
+      ...(workflow ? { workflow } : {}),
+      workflowSteps: steps,
+      ...(deps.skillToolName ? { skillToolName: deps.skillToolName } : {}),
+    })
+    return {
+      ok: true,
+      section,
+      plan: {
+        skills: skillNames,
+        // 只有**可用**的 server 参与验收：不可用的已在 prompt 里声明，不能因它判不达标。
+        mcp: mcp.map(m => m.server),
+        ...(workflow ? { workflow } : {}),
+        steps,
+      },
+    }
+  }
+
+  /**
+   * 落定后验收：所选技能 / MCP / 工作流步骤是否**真的**被使用（诉求 3 / 4 的验收侧）。
+   *
+   * 判据全部来自子会话的 `tool/call` 事件与最终输出，见
+   * `shared/capability-plan.ts#verifyCapabilityUsage`。事件读不到时按通过处理
+   * （观测能力缺失不应误杀任务），但会在返回里标明 `observable:false` 便于诊断。
+   */
+  async function verifyRunCapabilities(
+    sessionId: string,
+    plan: { skills: string[]; mcp: string[]; workflow?: string; steps: string[] },
+    output: string,
+  ): Promise<CapabilityVerification & { observable: boolean }> {
+    let toolCalls: ChildToolCall[] | undefined
+    if (deps.readChildToolCalls) {
+      try {
+        toolCalls = await deps.readChildToolCalls(sessionId)
+      } catch {
+        // 读取失败 ⇒ 视为不可观测（不因观测失败判任务不达标）。
+        toolCalls = undefined
+      }
+    }
+    /** 2026-10-30：子会话真实工具表（request/header），用于戳穿工具未注入的谎报。 */
+    let toolSurface: string[] | undefined
+    if (deps.readChildToolNames) {
+      try {
+        toolSurface = await deps.readChildToolNames(sessionId)
+      } catch {
+        toolSurface = undefined
+      }
+    }
+    const verdict = verifyCapabilityUsage({
+      skills: plan.skills,
+      mcp: plan.mcp,
+      workflowSteps: plan.steps,
+      ...(toolCalls !== undefined ? { toolCalls } : {}),
+      ...(toolSurface !== undefined ? { toolSurface } : {}),
+      output,
+      ...(deps.skillToolName ? { skillToolName: deps.skillToolName } : {}),
+    })
+    return { ...verdict, observable: toolCalls !== undefined }
+  }
+
   async function launchRun(p: {
     requirementId: string
     /** dispatcher 内部键（看板任务 id，或无看板时的兜底 id）。 */
@@ -1013,14 +1415,34 @@ export function createHostApi(deps: HostApiDeps): HostApi {
   }): Promise<DispatchResult> {
     try {
       // 问题 3：任务级冻结预设覆盖角色自带 preset（克隆而非改 role 实例，避免污染 RoleStore）。
-      // 说明：宿主 ONE-SHOT `subagents.start` 的请求体无 per-child preset 字段，子 agent 的 preset
-      // 作用域默认继承父会话实时链；这里仍把 role.preset 改为任务冻结值，保持三条派发路径一致，
-      // 并供角色可用性校验与未来宿主支持 per-child preset 时直接生效（不臆造请求字段）。
+      // 2026-10-29：宿主 `SubagentStartRequest.agentPreset` 已是真实字段，
+      // `orchestration/dispatch.ts` 会把它下发到 `startActivation`，preset 真正作用到子 agent。
       const effectiveRole: RoleDefinition =
         p.frozenConfig.preset && p.frozenConfig.preset !== p.role.preset
           ? { ...p.role, preset: p.frozenConfig.preset }
           : p.role
-      const budgetedPrompt = withBudgetSection(p.prompt, p.frozenConfig)
+      /**
+       * 诉求 3 / 4（2026-10-29）：所选技能 / MCP / 工作流**先预检、再下发**。
+       *
+       * 预检失败（技能取不到正文、所选 MCP 一个工具都没注册、工作流不在技能清单内）⇒
+       * **在动看板状态之前**就返回可读原因，让"选了但不生效"变成用户能看到的错误，
+       * 而不是一次看起来正常、实际什么都没用的执行。
+       */
+      const capability = await resolveCapabilityPlan(p.frozenConfig)
+      if (!capability.ok) {
+        if (deps.board && p.boardTaskId) {
+          deps.board.settleTask(p.boardTaskId, 'failed', {
+            stopReason: 'dispatch-failed',
+            diagnostic: capability.reason,
+            note: capability.reason,
+          })
+        }
+        return { ok: false, reason: capability.reason }
+      }
+      const withCapability = capability.section
+        ? appendPromptSection(p.prompt, capability.section)
+        : p.prompt
+      const budgetedPrompt = withBudgetSection(withCapability, p.frozenConfig)
 
       /**
        * spec 010 AC3.3：**优先复用同一需求的持久任务子会话**。
@@ -1089,9 +1511,6 @@ export function createHostApi(deps: HostApiDeps): HostApi {
             ...(p.frozenConfig.maxTokens && p.frozenConfig.maxTokens > 0
               ? { maxTokens: p.frozenConfig.maxTokens }
               : {}),
-            // REST 化后不再需要"拒绝原始 mcp 工具"：插件不依赖任何 tfs mcp 实例，
-            // 写操作只有 `adapter.executeWrite` 一条带凭据的路径。字段保留仅为兼容旧装配。
-            toolFilter: deps.tfsToolDeny?.(),
           },
           { parent: p.parent },
         )
@@ -1131,19 +1550,26 @@ export function createHostApi(deps: HostApiDeps): HostApi {
         const runResult = handle.result
         const bindTaskId = p.boardTaskId
         runResult?.then(
-          (sr: SubagentResult) => {
+          async (sr: SubagentResult) => {
             const output = extractOutputText(sr?.output)
             // 问题 4：从最终输出解析关键产物绝对路径（ARTIFACTS 段），落到任务级清单。
             const artifactPaths = parseArtifactPaths(output)
             /**
              * 问题 1：总时长看门狗终止优先于 run 自报原因（aborted 也可能是用户手动取消，
              * 但 consumeTimeout 命中即确定是看门狗），落"运行超时"失败。
+             *
+             * 2026-11-04：证据（实际跑了多久、最后一次活动距今多久）必须在 `forget()` **之前**
+             * 取出——forget 会清掉该任务的追踪记录（含证据）。文案交纯函数生成，不再断言
+             * "可能存在死循环"（真机上被掐死的那轮其实刚产出完整报告）。
              */
             const timedOut = deps.dispatcher.consumeTimeout?.(bindTaskId) === true
+            const timeoutEvidence = timedOut
+              ? deps.dispatcher.takeTimeoutDetail?.(bindTaskId)
+              : undefined
             // 超时标记消费后即可丢弃该任务的 run 追踪（run 句柄 + 需求索引 + 看门狗定时器）。
             deps.dispatcher.forget?.(bindTaskId)
             if (timedOut) {
-              const note = '任务运行总时长超过看门狗上限，已被自动终止（可能存在死循环或失控空转）'
+              const note = describeRunTimeout(timeoutEvidence)
               deps.board?.settleTask(bindTaskId, 'failed', {
                 runId: handle.id,
                 stopReason: 'timeout',
@@ -1154,12 +1580,62 @@ export function createHostApi(deps: HostApiDeps): HostApi {
               return
             }
             /**
+             * 诉求 3 / 4（2026-10-29）：**落定后验收所选能力是否真被使用**。
+             *
+             * 为什么要在这里而不是"只看 stopReason"：子 agent 完全可能"完成"了任务却一次
+             * 技能没加载、一次 MCP 没调（旧实现就是这种状态，因为选择从未真正下发）。
+             * 验收不达标的处理是**收口为待人工确认**而非直接判失败：任务本身可能确实干完了活，
+             * 只是没按纪律留痕，需要人看一眼 —— 直接判失败会把有效产出丢掉。
+             *
+             * 验收本身**绝不允许**把收口流程搞崩：内部全部 catch，异常时退回原本的成功收口。
+             */
+            let verification: (CapabilityVerification & { observable: boolean }) | undefined
+            if (capability.ok && capability.plan && (capability.plan.skills.length > 0 || capability.plan.steps.length > 0)) {
+              try {
+                verification = await verifyRunCapabilities(handle.id, capability.plan, output)
+              } catch {
+                verification = undefined
+              }
+            }
+            /**
              * 问题 5：收口不再只看 stopReason。`detectOutcome` 同时检查输出内容——
              * stopReason=completed 但结论是"请人工确认/人工确定"时，判 needs_confirmation，
              * 任务停在待确认（看板态保持 in_progress），不自动进入下游、不触发完成回写。
              */
             const outcome = detectOutcome(sr?.stopReason, output)
-            if (outcome === 'success') {
+            /**
+             * 2026-10-30（诉求 2）：pseudoToolCalls（输出里是 <read> 这类文本形态工具调用）
+             * **直接判失败**，不再降级为待人工确认——那不是"没留痕"，而是什么都没执行
+             * （模型 tool-call 格式漂移），留给人确认只会让人误以为产出可用。
+             */
+            const hardFail = verification?.pseudoToolCalls === true
+            if (hardFail) {
+              const note = verification?.note
+                ?? '执行无效：输出只有文本形态的工具调用（如 <read>），并未真正调用工具（模型 tool-call 格式漂移）'
+              deps.board?.settleTask(bindTaskId, 'failed', {
+                runId: handle.id,
+                stopReason: sr?.stopReason,
+                diagnostic: note,
+                ...(output ? { output } : {}),
+                ...(artifactPaths.length > 0 ? { artifactPaths } : {}),
+                note,
+              })
+            } else if (outcome === 'success' && verification && !verification.ok) {
+              deps.board?.settleTask(bindTaskId, 'needs_confirmation', {
+                runId: handle.id,
+                stopReason: sr?.stopReason,
+                ...(output ? { output } : {}),
+                ...(artifactPaths.length > 0 ? { artifactPaths } : {}),
+                note: verification.note ?? '待人工确认：未按要求使用所选技能 / MCP / 工作流',
+              })
+              // 问题 7 扫尾：验收不达标的待确认同样自动善后（补用所选能力继续）。
+              void maybeSweep({
+                taskId: bindTaskId,
+                outcome: 'needs_confirmation',
+                ...(sr?.stopReason ? { stopReason: sr.stopReason } : {}),
+                ...(output ? { output } : {}),
+              })
+            } else if (outcome === 'success') {
               deps.board?.settleTask(bindTaskId, 'success', {
                 runId: handle.id,
                 stopReason: sr?.stopReason,
@@ -1175,6 +1651,13 @@ export function createHostApi(deps: HostApiDeps): HostApi {
                 ...(artifactPaths.length > 0 ? { artifactPaths } : {}),
                 note: `待人工确认：${reason}`,
               })
+              // 问题 7 扫尾：主 agent 选推荐选项、编排同一子 agent 继续（不再停等人工）。
+              void maybeSweep({
+                taskId: bindTaskId,
+                outcome: 'needs_confirmation',
+                ...(sr?.stopReason ? { stopReason: sr.stopReason } : {}),
+                ...(output ? { output } : {}),
+              })
             } else {
               const diagnostic = sr?.diagnostic?.trim() || stopReasonNote(sr?.stopReason)
               deps.board?.settleTask(bindTaskId, 'failed', {
@@ -1183,6 +1666,13 @@ export function createHostApi(deps: HostApiDeps): HostApi {
                 diagnostic,
                 ...(output ? { output } : {}),
                 note: diagnostic,
+              })
+              // 问题 7 扫尾：瞬时失败续跑同一子 agent；拒绝/轮数耗尽转主 agent 亲做。
+              void maybeSweep({
+                taskId: bindTaskId,
+                outcome: 'failed',
+                ...(sr?.stopReason ? { stopReason: sr.stopReason } : {}),
+                ...(output ? { output } : {}),
               })
             }
           },
@@ -1260,17 +1750,25 @@ export function createHostApi(deps: HostApiDeps): HostApi {
       skills: [...(task.frozenConfig?.skills ?? [])],
       model: followUpRoute.model,
       ...(followUpRoute.modelProvider ? { modelProvider: followUpRoute.modelProvider } : {}),
-      // 问题 3/1：追问沿用任务冻结的预设与执行预算，保证可复现。
+      // 问题 3/1：追问沿用任务冻结的预设、工作流与执行预算，保证可复现。
       ...(task.frozenConfig?.preset ? { preset: task.frozenConfig.preset } : {}),
+      ...(task.frozenConfig?.workflow ? { workflow: task.frozenConfig.workflow } : {}),
       ...(task.frozenConfig?.maxDepth ? { maxDepth: task.frozenConfig.maxDepth } : {}),
       ...(task.frozenConfig?.maxTokens ? { maxTokens: task.frozenConfig.maxTokens } : {}),
     }
+
+    // 工作目录沿用 任务级 > 需求级 回落（问题 1）；追问与首轮必须是同一个代码库。
+    // 2026-11-03：上移到 parent 解析之前，理由同 `dispatch`（ensureParent 要用它当会话 cwd）。
+    const requirementId = String(task.requirementId)
+    const workspace = normalizeWorkspace(
+      task.workspace ?? deps.board.board?.snapshot?.requirements?.[requirementId]?.workspace ?? '',
+    )
 
     // 与 dispatch 同样：先解析真实 parent，拿不到就**不**开新一轮 attempt，
     // 避免留下"running 但从未派发"的假执行。
     let parent: Agent
     try {
-      parent = deps.getParent()
+      parent = deps.ensureParent ? await deps.ensureParent(workspace) : deps.getParent()
     } catch (e) {
       return { ok: false, reason: `派发前置条件不满足：${(e as Error).message}` }
     }
@@ -1280,11 +1778,6 @@ export function createHostApi(deps: HostApiDeps): HostApi {
     const opened = deps.board.openFollowUp(taskId)
     if (!opened.ok || opened.attempt === undefined) return { ok: false, reason: opened.reason }
 
-    // 工作目录沿用 任务级 > 需求级 回落（问题 1）；追问与首轮必须是同一个代码库。
-    const requirementId = String(task.requirementId)
-    const workspace = normalizeWorkspace(
-      task.workspace ?? deps.board.board?.snapshot?.requirements?.[requirementId]?.workspace ?? '',
-    )
     const wsSection = buildWorkspacePromptSection({
       ...(workspace ? { workspace } : {}),
       taskTitle: task.title,
@@ -1480,6 +1973,32 @@ export function createHostApi(deps: HostApiDeps): HostApi {
     return deps.board.listTasks({ roleAgent: roleName }).map(t => t.taskId)
   }
 
+  // ── 技能/MCP 分组（2026-11-03 用户诉求） ──
+
+  function listSkillGroups(): SkillMcpGroup[] {
+    return deps.skillGroups?.list() ?? []
+  }
+
+  function saveSkillGroup(group: SkillMcpGroup): { ok: boolean; reason?: string } {
+    if (!deps.skillGroups) return { ok: false, reason: '技能分组存储不可用（宿主未接线 SkillGroupStore）' }
+    try {
+      deps.skillGroups.save(group)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message }
+    }
+  }
+
+  function deleteSkillGroup(id: string): { ok: boolean; reason?: string } {
+    if (!deps.skillGroups) return { ok: false, reason: '技能分组存储不可用（宿主未接线 SkillGroupStore）' }
+    try {
+      const removed = deps.skillGroups.delete(id)
+      return removed ? { ok: true } : { ok: false, reason: `分组 ${id} 不存在` }
+    } catch (e) {
+      return { ok: false, reason: (e as Error).message }
+    }
+  }
+
   /** 看板能力缺失时的统一降级返回。 */
   function boardUnavailable(): BoardSnapshotView {
     return {
@@ -1641,6 +2160,7 @@ export function createHostApi(deps: HostApiDeps): HostApi {
       skills?: string[]
       mcp?: string[]
       preset?: string
+      workflow?: string
       maxDepth?: number
       maxTokens?: number
     } = {}
@@ -1677,6 +2197,11 @@ export function createHostApi(deps: HostApiDeps): HostApi {
       if (typeof input.preset !== 'string') return { ok: false, reason: 'preset 必须是字符串' }
       patch.preset = input.preset
     }
+    // 2026-10-29（诉求 4）：工作流技能名（空串 = 清空工作流）。
+    if (input.workflow !== undefined) {
+      if (typeof input.workflow !== 'string') return { ok: false, reason: 'workflow 必须是字符串' }
+      patch.workflow = input.workflow
+    }
     // 问题 1：执行预算（非负有限数；0 = 沿用默认/不限制）。
     for (const field of ['maxDepth', 'maxTokens'] as const) {
       const v = input[field]
@@ -1689,7 +2214,7 @@ export function createHostApi(deps: HostApiDeps): HostApi {
     if (Object.keys(patch).length === 0) {
       return {
         ok: false,
-        reason: '未提供任何可改字段（prompt / workspace / model / modelProvider / skills / mcp / preset / maxDepth / maxTokens）',
+        reason: '未提供任何可改字段（prompt / workspace / model / modelProvider / skills / mcp / preset / workflow / maxDepth / maxTokens）',
       }
     }
     if (input.expectedRevision !== undefined) {
@@ -1739,18 +2264,19 @@ export function createHostApi(deps: HostApiDeps): HostApi {
         settleFailed(`任务角色「${task.roleAgent}」不存在或未绑定 provider（检查 US5 角色配置）`)
         return
       }
+      // 与 `dispatch` / `followUpTask` 同口径的三段式组装：工作目录 → 需求级提示词 → 任务正文。
+      // 工作目录同样按 任务级 > 需求级 回落（问题 1：只在任务上设、或只在需求上设，都必须生效）。
+      // 2026-11-03：上移到 parent 解析之前（ensureParent 需要它当会话 cwd）。
+      const requirementId = String(task.requirementId)
+      const requirementWorkspace = deps.board.board?.snapshot?.requirements?.[requirementId]?.workspace
+      const workspace = normalizeWorkspace(task.workspace ?? requirementWorkspace ?? '')
       let parent: Agent
       try {
-        parent = deps.getParent()
+        parent = deps.ensureParent ? await deps.ensureParent(workspace) : deps.getParent()
       } catch (e) {
         settleFailed(`派发前置条件不满足：${(e as Error).message}`)
         return
       }
-      // 与 `dispatch` / `followUpTask` 同口径的三段式组装：工作目录 → 需求级提示词 → 任务正文。
-      // 工作目录同样按 任务级 > 需求级 回落（问题 1：只在任务上设、或只在需求上设，都必须生效）。
-      const requirementId = String(task.requirementId)
-      const requirementWorkspace = deps.board.board?.snapshot?.requirements?.[requirementId]?.workspace
-      const workspace = normalizeWorkspace(task.workspace ?? requirementWorkspace ?? '')
       const wsSection = buildWorkspacePromptSection({
         ...(workspace ? { workspace } : {}),
         taskTitle: task.title,
@@ -1776,8 +2302,9 @@ export function createHostApi(deps: HostApiDeps): HostApi {
           skills: [...(task.frozenConfig?.skills ?? [])],
           model: boardRoute.model,
           ...(boardRoute.modelProvider ? { modelProvider: boardRoute.modelProvider } : {}),
-          // 问题 3/1：任务编辑后的预设与执行预算随启动生效。
+          // 问题 3/1：任务编辑后的预设、工作流与执行预算随启动生效。
           ...(task.frozenConfig?.preset ? { preset: task.frozenConfig.preset } : {}),
+          ...(task.frozenConfig?.workflow ? { workflow: task.frozenConfig.workflow } : {}),
           ...(task.frozenConfig?.maxDepth ? { maxDepth: task.frozenConfig.maxDepth } : {}),
           ...(task.frozenConfig?.maxTokens ? { maxTokens: task.frozenConfig.maxTokens } : {}),
         },
@@ -1985,9 +2512,7 @@ export function createHostApi(deps: HostApiDeps): HostApi {
 
     if (deps.autoChainTasks !== false && deps.board && typeof deps.board.autoStartRunnable === 'function') {
       try {
-        const limit = deps.dispatchConcurrency ?? 3
-        const started = deps.board.autoStartRunnable(limit)
-        for (const id of started.taskIds) void launchBoardTaskExecution(id)
+        await startRequirementChain(info.requirementKey)
       } catch {
         // 自动续跑是增强能力：任何意外都不应影响已完成任务的收口结果。
       }
@@ -2020,6 +2545,255 @@ export function createHostApi(deps: HostApiDeps): HostApi {
           /* 回写失败由报告与"重新回写"入口承载，不打断任务流 */
         })
     }
+  }
+
+  /**
+   * 启动某需求的编排链：把**已就绪**（依赖全完成）的待办任务置为运行中并逐个真实派发。
+   *
+   * 串行口径（2026-11-03 问题 5）：需求的 `orchestration.dispatchSequential=true`
+   * 时并发上限压到 1 —— 上个任务完成才编排下个；否则沿用全局 `dispatchConcurrency`。
+   * 依赖顺序本身由引擎 `blockedBy` 保证（只选"依赖全 completed"的就绪任务）。
+   */
+  async function startRequirementChain(requirementKey: string): Promise<void> {
+    if (!deps.board || typeof deps.board.autoStartRunnable !== 'function') return
+    const orch = deps.board.getOrchestration?.(requirementKey)
+    const limit = orch?.dispatchSequential ? 1 : (deps.dispatchConcurrency ?? 3)
+    const started = deps.board.autoStartRunnable(limit, requirementKey)
+    for (const id of started.taskIds) void launchBoardTaskExecution(id)
+  }
+
+  /**
+   * 开始编排（2026-11-03 问题 4/5）：立刻启动某需求的子 Agent 链，或登记为定时启动。
+   *
+   * - `mode:'now'` ⇒ 直接 {@link startRequirementChain}（拆解弹框「立刻」/ 到点触发共用）；
+   * - `mode:'at'` ⇒ 交给调度器，到点后调度器以 `mode:'now'` 回调本方法（持久化 + 重启补跑）。
+   *
+   * `sequential:true`（拆解弹框的默认口径）会写进需求编排状态，链式放行全程保持
+   * "一次只编排一个子 Agent"。
+   */
+  async function orchestrationStart(input: {
+    requirementKey: string
+    mode: 'now' | 'at'
+    dueAt?: string
+    sequential?: boolean
+  }): Promise<{ ok: boolean; reason?: string; scheduledAt?: string }> {
+    const key = typeof input?.requirementKey === 'string' ? input.requirementKey.trim() : ''
+    if (!key) return { ok: false, reason: 'requirementKey 必填' }
+    if (!deps.board) return { ok: false, reason: '看板服务不可用' }
+    const seq = input.sequential === true
+    // 串行标志先落编排状态：链式放行（handleTaskSettled）据此压并发。
+    const existing = deps.board.getOrchestration?.(key)
+    if (existing && (existing.dispatchSequential === true) !== seq && typeof deps.board.setOrchestration === 'function') {
+      deps.board.setOrchestration(key, { ...existing, dispatchSequential: seq })
+    } else if (!existing && seq && typeof deps.board.setOrchestration === 'function') {
+      deps.board.setOrchestration(key, { mode: 'off', dispatchSequential: true })
+    }
+    if (input.mode === 'now') {
+      await startRequirementChain(key)
+      return { ok: true }
+    }
+    const dueAt = input.dueAt ?? ''
+    const dueMs = Date.parse(dueAt)
+    if (Number.isNaN(dueMs)) return { ok: false, reason: '定时时间无效（不是合法 ISO 时间）' }
+    if (dueMs <= Date.now()) return { ok: false, reason: '定时时间必须晚于当前时间' }
+    if (!deps.scheduler) return { ok: false, reason: '调度器未装配（插件与宿主版本不匹配）：无法登记定时编排' }
+    const reg = deps.scheduler.schedule({
+      id: `chain:${key}`,
+      dueAt,
+      kind: 'chain',
+      payload: { requirementKey: key, sequential: seq },
+      note: `定时开始编排：${key}`,
+    })
+    if (!reg.ok) return { ok: false, reason: reg.reason ?? '登记定时编排失败' }
+    return { ok: true, scheduledAt: dueAt }
+  }
+
+  /**
+   * 主 agent 扫尾（2026-11-03 问题 7）：任务收口为 `needs_confirmation` / `failed` 时的
+   * 自动善后。决策纯逻辑在 `shared/sweep.ts#decideSweep`，本函数只执行：
+   *
+   *   1. **续跑**（待人工确认 ⇒ 选推荐选项让同一子 agent 继续；瞬时失败 ⇒ 继续/重试）——
+   *      走既有 `followUpTask`（同角色同冻结配置起新一轮，携带上一轮输出）；
+   *   2. **主 agent 亲做**（拒绝 / 扫尾轮数耗尽 / 续跑派发失败）——
+   *      `openFollowUp` 重开后由编排主 agent 直接完成，产出按 TASK_DONE 判成败收口；
+   *   3. 收口成功即触发既有链式放行（`afterTaskSettled`），自动编排下一个子 agent。
+   *
+   * **永不抛错**：扫尾是增强能力，任何异常只落事件级痕迹，不打断收口主路径。
+   */
+  async function maybeSweep(input: {
+    taskId: string
+    outcome: 'success' | 'failed' | 'needs_confirmation'
+    stopReason?: string
+    output?: string
+  }): Promise<void> {
+    try {
+      if (deps.sweepEnabled === false) return
+      const board = deps.board
+      if (!board) return
+      const task = board.snapshot().tasks.find(t => t.taskId === input.taskId)
+      if (!task) return
+      const sweepRound = task.orchestration?.sweepRound ?? 0
+      const action = decideSweep({
+        outcome: input.outcome,
+        ...(input.stopReason ? { stopReason: input.stopReason } : {}),
+        ...(input.output ? { output: input.output } : {}),
+        sweepRound,
+        maxSweepRounds: deps.sweepMaxRounds ?? 2,
+      })
+      if (action.kind === 'none') return
+
+      if (action.kind === 'continue_with_recommendation' || action.kind === 'retry_continue') {
+        let recommendation = action.kind === 'continue_with_recommendation' ? action.recommendation : ''
+        // 推荐项解析不出时交主 agent 对着输出决断（诉求 7："主 agent 选择推荐选项"）。
+        if (action.kind === 'continue_with_recommendation' && !recommendation) {
+          recommendation = await (deps.orchestrator?.decide(
+            task.requirementId,
+            `【主 agent 扫尾】子 agent 请求人工确认，请你看它的输出并**选出推荐选项**，`
+            + `只回复一行：CHOICE: <选项或决定>\n\n子 agent 输出尾部：\n${(input.output ?? '').slice(-1200)}`,
+          ) ?? Promise.resolve(''))
+          if (recommendation) {
+            const m = /CHOICE\s*[:：]\s*(.+)/i.exec(recommendation)
+            recommendation = (m?.[1] ?? recommendation).trim()
+          }
+        }
+        const message = buildContinuePrompt({
+          recommendation,
+          ...(input.output ? { outputTail: input.output.slice(-800) } : {}),
+        })
+        if (typeof board.setTaskOrchestration === 'function') {
+          board.setTaskOrchestration(input.taskId, { sweepRound: sweepRound + 1 })
+        }
+        const r = await followUpTask({ taskId: input.taskId, message })
+        if (!r.ok) {
+          await mainAgentComplete(input.taskId, `扫尾续跑派发失败：${r.reason ?? '未知原因'}`)
+        }
+        return
+      }
+
+      // action.kind === 'main_agent_completes'
+      await mainAgentComplete(input.taskId, action.reason)
+    } catch {
+      // 扫尾绝不外溢：留待人工处理（UI 上任务状态已如实可见）。
+    }
+  }
+
+  /**
+   * 扫尾兜底：主 agent **亲自**完成任务（问题 7 第 3 条）。
+   *
+   * `openFollowUp` 重开一条 attempt → 编排主 agent 直接干活 → 按其输出收口。
+   * 收口成功会经 `afterTaskSettled` 自动放行下一个子 agent（问题 7 末句）。
+   */
+  async function mainAgentComplete(taskId: string, reason: string): Promise<void> {
+    const board = deps.board
+    if (!board) return
+    const task = board.snapshot().tasks.find(t => t.taskId === taskId)
+    if (!task) return
+    const opened = board.openFollowUp(taskId)
+    if (!opened.ok) {
+      // 连重开都失败（终态/并发冲突）：任务保持原样，人工入口仍在。
+      return
+    }
+    const prompt = buildMainAgentCompletePrompt({
+      taskId,
+      title: task.title,
+      ...(task.prompt ? { taskPrompt: task.prompt } : {}),
+      reason,
+    })
+    /**
+     * 2026-11-03 问题 4：**开 attempt 后必须恒收口** —— `decide` 抛错/悬挂曾让
+     * 打开的尝试裸奔到运行期看门狗（无 runId 超时 → 标 failed），而任务本体可能
+     * 早已被子 agent 做完（实机 2055202 attempt 4）。故 try/catch 兜异常、
+     * race 兜悬挂（decide 自身超时即便失效也有硬上限）。
+     */
+    const decideTimeoutMs = 240_000
+    let text = ''
+    try {
+      text = await Promise.race([
+        deps.orchestrator?.decide(task.requirementId, prompt, {
+          // 亲做是"整干一个任务"，给足时间（缺省 4 分钟；编排内部超时不受此影响）。
+          timeoutMs: decideTimeoutMs,
+        }) ?? Promise.resolve(''),
+        // 悬挂兜底：decide 若不兑现自身超时，5s 宽限后按"无产出"收口，绝不留 running。
+        delay(decideTimeoutMs + 5_000).then(() => ''),
+      ])
+    } catch (e) {
+      board.settleTask(taskId, 'failed', {
+        note: `扫尾失败：${reason}；主 agent 执行异常：${e instanceof Error ? e.message : String(e)}`,
+        stopReason: 'sweep-main-agent-error',
+      })
+      return
+    }
+    if (!text) {
+      board.settleTask(taskId, 'failed', {
+        note: `扫尾失败：${reason}；主 agent 也未产出结果，等待人工处理`,
+        stopReason: 'sweep-main-agent-empty',
+      })
+      return
+    }
+    // 亲做结果判定与子 agent 同口径：完成标记/无待确认迹象 ⇒ 成功；否则失败（留人工）。
+    const done = /\bTASK_DONE\b/.test(text) || !/NEEDS_HUMAN_CONFIRM|请人工确认|人工确认/.test(text)
+    board.settleTask(taskId, done ? 'success' : 'failed', {
+      output: text,
+      note: `主 agent 亲自完成（扫尾）：${reason}`,
+      ...(done ? {} : { stopReason: 'sweep-main-agent-needs-human' }),
+    })
+  }
+
+  /**
+   * 调度条目清单（问题 4/5；2026-11-03 问题 3 归一为 UI 视图）。
+   * 调度器未装配返回空表（UI 如实显示"无"）。
+   */
+  function listSchedules(): ScheduleEntryView[] {
+    return (deps.scheduler?.list() ?? []).map(e => {
+      // 需求键归一：chain 条目 payload 是 { requirementKey }；dispatch 条目是完整
+      // DispatchInput（取 targetWorkItem —— 登记时就是 `{id}@{collection}` 需求键）。
+      let requirementKey: string | undefined
+      const payload = e.payload as { requirementKey?: unknown; targetWorkItem?: unknown } | null | undefined
+      if (e.kind === 'chain' && typeof payload?.requirementKey === 'string') {
+        requirementKey = payload.requirementKey
+      } else if (e.kind === 'dispatch' && typeof payload?.targetWorkItem === 'string') {
+        requirementKey = payload.targetWorkItem
+      }
+      return {
+        id: e.id,
+        dueAt: e.dueAt,
+        kind: e.kind,
+        createdAt: e.createdAt,
+        ...(e.note ? { note: e.note } : {}),
+        ...(requirementKey ? { requirementKey } : {}),
+      }
+    })
+  }
+
+  /** 取消一条调度（问题 4/5）。 */
+  function cancelSchedule(id: string): boolean {
+    return deps.scheduler?.cancel(id) ?? false
+  }
+
+  /**
+   * 修改一条调度的到点时刻（2026-11-03 问题 3）。
+   * 同 id 重登记即覆盖旧条目（`ScheduleService.schedule` 语义）并重新武装定时器；
+   * 校验同登记口径：dueAt 必须是合法且晚于当前时间的 ISO 时刻。
+   */
+  function updateSchedule(id: string, dueAt: string): { ok: boolean; reason?: string; scheduledAt?: string } {
+    const scheduler = deps.scheduler
+    if (!scheduler) return { ok: false, reason: '调度器未装配（插件与宿主版本不匹配）' }
+    const key = typeof id === 'string' ? id.trim() : ''
+    if (!key) return { ok: false, reason: 'id 必填' }
+    const dueMs = Date.parse(dueAt ?? '')
+    if (Number.isNaN(dueMs)) return { ok: false, reason: '定时时间无效（不是合法 ISO 时间）' }
+    if (dueMs <= Date.now()) return { ok: false, reason: '定时时间必须晚于当前时间' }
+    const existing = scheduler.list().find(e => e.id === key)
+    if (!existing) return { ok: false, reason: '无此调度条目（可能已触发或已取消）' }
+    const reg = scheduler.schedule({
+      id: existing.id,
+      dueAt,
+      kind: existing.kind,
+      payload: existing.payload,
+      ...(existing.note ? { note: existing.note } : {}),
+    })
+    if (!reg.ok) return { ok: false, reason: reg.reason ?? '修改定时执行失败' }
+    return { ok: true, scheduledAt: dueAt }
   }
 
   /** 纯粹的延时（用于给异步增强步骤设"宽限"，避免主路径被它拖住）。 */
@@ -2067,9 +2841,16 @@ export function createHostApi(deps: HostApiDeps): HostApi {
     listRoles,
     saveRole,
     deleteRole,
+    listSkillGroups,
+    saveSkillGroup,
+    deleteSkillGroup,
     getBoard,
     claimRequirement,
     decomposeRequirement,
+    orchestrationStart,
+    listSchedules,
+    cancelSchedule,
+    updateSchedule,
     restoreRequirement,
     enrichRequirement,
     deleteTasks,

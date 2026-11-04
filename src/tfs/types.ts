@@ -37,6 +37,11 @@ export interface RequirementOrchestration {
   brief?: RequirementBrief
   /** 任务子会话复用表：`复用键 → 持久子会话 id`（AC3.3）。 */
   taskSessions?: Record<string, string>
+  /**
+   * 串行编排（2026-11-03 问题 5）：true = 同一时刻只编排一个子 Agent，
+   * 上个任务完成才编排下个（拆解弹框选「立刻/定时」时置位）。缺省 false（并发沿用全局上限）。
+   */
+  dispatchSequential?: boolean
 }
 
 /** 来自 TFS 的工作项（需求）。 */

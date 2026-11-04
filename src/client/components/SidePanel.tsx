@@ -177,6 +177,8 @@ export function SidePanel(props: SidePanelProps): JSX.Element {
         return res
       },
       // 注：原 `parse: bridge.parse` 已移除（桥上无实现，恒 undefined）。
+      // 2026-11-03 用户诉求 1：发起执行成功后切到右栏「任务」页（与中央工作台同语义）。
+      onDispatched: () => setTab('tasks'),
     }),
     [bridge, boardStore],
   )

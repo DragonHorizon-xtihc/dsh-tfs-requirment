@@ -77,22 +77,43 @@ export function filterCompletedRequirements<T extends Pick<RequirementSummary, '
   return items.filter(r => String(r.id).includes(kw) || r.title.toLowerCase().includes(kw))
 }
 
+/** ISO 时刻 → 本地 `HH:mm`（定时待执行文案用；非法时刻回退原串）。 */
+function formatDueMinute(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
 /**
- * 派生某需求的执行状态（问题 4）。
+ * 派生某需求的执行状态（问题 4；2026-11-03 问题 3 增「定时待执行」）。
  *
- * 判定顺序即优先级：已完成（需求级）> 未拆解 > 执行中 > 有失败 > 待办 > 已完成 c/t。
+ * 判定顺序即优先级：已完成（需求级）> 未拆解 > 定时待执行 > 执行中 > 有失败 > 待办 > 已完成 c/t。
  * 这个顺序是有意的：**"正在跑"比"有失败"更需要被看到**（失败任务可能已经有人在处理），
  * 而"有失败"又比"还有待办"更需要被看到（用户需要知道有东西卡住了）。
  *
+ * 「定时待执行」只替换**无任务**时的「未拆解」：定时登记此刻不建任务（到点才派发），
+ * 界面若仍显示「未拆解」会误导用户"定时没生效"（2026-11-03 实机反馈）。
+ * 名下已有任务时（如 chain 定时编排已有拆解任务）仍按任务集合派生，定时信息在
+ * 任务中心「定时执行」区展示。
+ *
  * @param r - 需求（只看 `execState`）。
  * @param ownTasks - 该需求名下的全部任务（含已取消）。
+ * @param scheduledDueAt - 该需求挂起的定时条目到点时刻（ISO 8601；无 = 不参与派生）。
  */
 export function summarizeRequirementExec(
   r: Pick<RequirementSummary, 'execState'>,
   ownTasks: readonly Pick<BoardTaskView, 'state' | 'execState'>[],
+  scheduledDueAt?: string,
 ): RequirementExecSummary {
   if (isRequirementCompleted(r)) return { text: '已完成', tone: 'done' }
-  if (ownTasks.length === 0) return { text: '未拆解', tone: 'todo' }
+  if (ownTasks.length === 0) {
+    if (scheduledDueAt) {
+      return { text: `定时待执行 ${formatDueMinute(scheduledDueAt)}`, tone: 'pending' }
+    }
+    return { text: '未拆解', tone: 'todo' }
+  }
   const running = ownTasks.filter(t => t.execState === 'running').length
   if (running > 0) return { text: `执行中 ${running}`, tone: 'running' }
   const failed = ownTasks.filter(t => t.execState === 'failed').length

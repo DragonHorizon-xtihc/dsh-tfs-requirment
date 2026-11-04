@@ -123,9 +123,96 @@ export function mcpServerNamesFromSchemas(
   return [...found].sort()
 }
 
+/**
+ * 按名字读取技能**正文**（`ctx.skills.get(name).content`），带作用域探测。
+ *
+ * ## 为什么不能直接 `skills.get(name)`
+ *
+ * `list()` / `get()` 省略 `scope` 时**只读全局层**；用户级技能（`$DSH_HOME/skills`、
+ * `~/.agents/skills`）只挂在 preset 的 standing 作用域层（web profile 明确禁用宿主级
+ * skill-filesystem，"presets own local discovery"）。直接 `get(name)` 对它们返回 `undefined`，
+ * 若据此判"技能不可用"就会把**正常安装的用户技能**拒掉。
+ *
+ * 因此这里复用 {@link collectSkills} 的同一套作用域入口：全局层 → 每个非损坏 preset 的
+ * `acquireScope(id).key`（0.1.7+，租约即时释放）→ `standingKeyFor(id)`（≤0.1.6 兼容）。
+ *
+ * 与目录采集的差别：**只读点名的那几个技能**（派发时通常 0–3 个），不做全量 O(N) 读取，
+ * 也不缓存正文（正文可能很大，塞进面板数据会把响应体撑爆）。
+ *
+ * @param host - 宿主上下文（`get(name)` 非严格访问器）。
+ * @param names - 技能名清单。
+ * @returns 能读到的技能正文（读不到的**不出现在结果里**，由调用方决定是否报错）。
+ */
+export async function loadSkillContents(
+  host: DshCatalogHost,
+  names: readonly string[],
+): Promise<Array<{ name: string; content: string }>> {
+  const wanted = [...new Set((names ?? []).filter(n => typeof n === 'string' && n.trim().length > 0))]
+  if (wanted.length === 0) return []
+  const skills = host.get('skills') as
+    | { get?: (name: string, options?: { scope?: unknown }) => Promise<{ name?: unknown; content?: unknown } | undefined> }
+    | undefined
+  if (!skills || typeof skills.get !== 'function') return []
+
+  /** 候选作用域：`undefined` 代表全局层（省略 scope）。 */
+  const scopes: unknown[] = [undefined]
+  const agentPresets = host.get('agentPresets') as
+    | {
+        list?: () => Promise<unknown>
+        acquireScope?: (id?: string) => Promise<{ key: unknown } & AsyncDisposable>
+        standingKeyFor?: (id?: string) => Promise<unknown>
+      }
+    | undefined
+  if (agentPresets && typeof agentPresets.list === 'function') {
+    try {
+      const rows = await agentPresets.list()
+      if (Array.isArray(rows)) {
+        for (const row of rows) {
+          const r = row as { id?: unknown; broken?: unknown }
+          const id = typeof r?.id === 'string' ? r.id : ''
+          if (!id || r.broken) continue
+          try {
+            if (typeof agentPresets.acquireScope === 'function') {
+              const lease = await agentPresets.acquireScope(id)
+              try {
+                scopes.push(lease.key)
+              } finally {
+                // 与目录采集同一依据：retired 只在 unregister 时置位，提前释放不会销毁作用域。
+                await lease[Symbol.asyncDispose]()
+              }
+            } else if (typeof agentPresets.standingKeyFor === 'function') {
+              scopes.push(await agentPresets.standingKeyFor(id))
+            }
+          } catch {
+            // 单个预设作用域不可用：跳过（不影响其它来源）。
+          }
+        }
+      }
+    } catch {
+      // 预设清单不可读：只剩全局层（与目录采集的降级口径一致）。
+    }
+  }
+
+  const out: Array<{ name: string; content: string }> = []
+  for (const name of wanted) {
+    for (const scope of scopes) {
+      try {
+        const def = await skills.get(name, scope === undefined ? undefined : { scope })
+        const content = typeof def?.content === 'string' ? def.content : ''
+        if (content.length > 0) {
+          out.push({ name, content })
+          break
+        }
+      } catch {
+        // 该作用域读不到（未命中/权限/解析失败）→ 试下一个来源。
+      }
+    }
+  }
+  return out
+}
+
 /** 采集器构造参数。 */
-export interface DshCatalogOptions {
-  host: DshCatalogHost
+export interface DshCatalogOptions {  host: DshCatalogHost
   /**
    * MCP server 兜底清单：`tools.schemas()` 不可用时至少要能看到配置里声明的那个，
    * 否则面板会给出"没有任何 MCP 可选"的错误结论。

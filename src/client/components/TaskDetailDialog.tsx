@@ -727,7 +727,7 @@ export function TaskDetailDialog(props: {
         {/* 冻结配置 */}
         <details style={{ margin: '12px 0 4px' }}>
           <summary style={{ cursor: 'pointer', fontSize: 12, color: '#475569', fontWeight: 600 }}>
-            冻结配置（角色 / 模型 / 工作目录 / 技能 / MCP / 预设 / 预算）
+             冻结配置（角色 / 模型 / 工作目录 / 技能 / 工作流 / MCP / 预设 / 预算）
           </summary>
           <div style={{ fontSize: 11.5, color: '#334155', background: '#f8fafc', border: '1px solid #e8ecf3', borderRadius: 10, padding: 10, marginTop: 7, lineHeight: 1.9 }}>
             <div>
@@ -737,7 +737,8 @@ export function TaskDetailDialog(props: {
               <strong>工作目录</strong> {props.task.workspace || '未接线'}
             </div>
             <div>
-              <strong>技能</strong> {fc.skills.length ? fc.skills.join('、') : '无'} ｜ <strong>MCP</strong>{' '}
+              <strong>技能</strong> {fc.skills.length ? fc.skills.join('、') : '无'} ｜ <strong>工作流</strong>{' '}
+              {fc.workflow ? `${fc.workflow}（强制逐步）` : '未启用'} ｜ <strong>MCP</strong>{' '}
               {fc.mcp.length ? fc.mcp.join('、') : '无'}
             </div>
             <div>

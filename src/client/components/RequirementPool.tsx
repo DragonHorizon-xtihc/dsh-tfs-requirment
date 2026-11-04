@@ -26,6 +26,15 @@ import type {
   UiState,
 } from '../../shared/contracts.js'
 
+/**
+ * 领取弹框草稿缓存（2026-11-03 问题 2）。
+ *
+ * 弹框曾因遮罩 click（含"弹框内按下、遮罩上释放"的拖拽手势）被误关，已填内容
+ * 随 openClaim 的重置一并丢失。现在按需求键缓存工作目录/提示词：误关、重开、
+ * 甚至组件重挂载（模块级 Map 存活）都恢复得回来；领取成功才清除。
+ */
+const claimDrafts = new Map<string, { workspace: string; prompt: string }>()
+
 const sectionStyle: React.CSSProperties = {
   border: '1px solid #e5e7eb',
   borderRadius: 8,
@@ -148,6 +157,8 @@ export function RequirementPool(props: {
   const [claimTarget, setClaimTarget] = useState<RequirementSummary | null>(null)
   const [claimWorkspace, setClaimWorkspace] = useState('')
   const [claimPrompt, setClaimPrompt] = useState('')
+  /** 问题 2：遮罩关闭只认"按下也在遮罩上"的 click（挡拖拽手势在遮罩上释放产生的误关）。 */
+  const overlayDownTarget = useRef<EventTarget | null>(null)
 
   /**
    * 已完成 UI 状态水合的集合（问题 2）：水合完成前不得把初始默认值回写覆盖磁盘上的记忆。
@@ -461,6 +472,7 @@ useEffect(() => {
       // 问题 5：领取入池后立即通知 Workbench 刷新看板 → 任务中心实时出现该需求。
       props.onClaimed?.()
       // 领取成功才关弹框：失败时保留用户已填的工作目录/提示词，便于改一下就重试。
+      claimDrafts.delete(`${item.id}@${item.collection}`)
       setClaimTarget(null)
       setClaimPrompt('')
     } catch (e) {
@@ -470,11 +482,12 @@ useEffect(() => {
     }
   }
 
-  /** 打开领取弹框（问题 6）：带上工具栏里的默认工作目录。 */
+  /** 打开领取弹框（问题 6）：带上工具栏里的默认工作目录；问题 2：优先恢复该需求的草稿。 */
   const openClaim = (item: RequirementSummary): void => {
     setMessage('')
-    setClaimPrompt('')
-    setClaimWorkspace(workspace.trim())
+    const draft = claimDrafts.get(`${item.id}@${item.collection}`)
+    setClaimPrompt(draft?.prompt ?? '')
+    setClaimWorkspace(draft?.workspace ?? workspace.trim())
     setClaimTarget(item)
   }
 
@@ -750,11 +763,21 @@ useEffect(() => {
         />
       </div>
 
-      {/* 问题 6：领取入池弹框 —— 选工作目录 + 填需求级提示词 */}
+      {/* 问题 6：领取入池弹框 —— 选工作目录 + 填需求级提示词
+          问题 2（2026-11-03）：遮罩点击关闭只在"按下也在遮罩上"时生效 ——
+          曾有"弹框内按下（拖选文本/拖动）在遮罩上释放"被浏览器合成 click 打到遮罩上，
+          弹框一移出鼠标就消失；且误关后草稿按需求键缓存（claimDrafts），重开即恢复。 */}
       {claimTarget && (
         <div
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}
-          onClick={() => setClaimTarget(null)}
+          onMouseDown={e => {
+            overlayDownTarget.current = e.target
+          }}
+          onClick={e => {
+            if (e.target === e.currentTarget && overlayDownTarget.current === e.currentTarget) {
+              setClaimTarget(null)
+            }
+          }}
         >
           <div
             style={{ background: '#fff', borderRadius: 10, padding: 18, maxWidth: 640, width: '92%', maxHeight: '80vh', overflow: 'auto' }}
@@ -774,7 +797,13 @@ useEffect(() => {
               <select
                 style={{ ...inputStyle, width: '100%' }}
                 value={claimWorkspace}
-                onChange={e => setClaimWorkspace(e.target.value)}
+                onChange={e => {
+                  setClaimWorkspace(e.target.value)
+                  claimDrafts.set(`${claimTarget.id}@${claimTarget.collection}`, {
+                    workspace: e.target.value,
+                    prompt: claimPrompt,
+                  })
+                }}
               >
                 <option value="">— 不指定 —</option>
                 {(props.workspaces ?? []).map(w => (
@@ -797,7 +826,13 @@ useEffect(() => {
               style={{ ...inputStyle, width: '100%', marginTop: 6 }}
               placeholder="也可直接手填绝对路径，如 D:\\code\\his（留空 = 不指定）"
               value={claimWorkspace}
-              onChange={e => setClaimWorkspace(e.target.value)}
+              onChange={e => {
+                  setClaimWorkspace(e.target.value)
+                  claimDrafts.set(`${claimTarget.id}@${claimTarget.collection}`, {
+                    workspace: e.target.value,
+                    prompt: claimPrompt,
+                  })
+                }}
             />
 
             <label style={{ display: 'block', fontSize: 12, color: '#6b7280', margin: '10px 0 4px' }}>
@@ -807,7 +842,13 @@ useEffect(() => {
               style={{ ...inputStyle, width: '100%', minHeight: 90, boxSizing: 'border-box' }}
               placeholder="例：本次只改后端，遵循 Tjgl 代码规范；数据库变更需附回滚脚本。"
               value={claimPrompt}
-              onChange={e => setClaimPrompt(e.target.value)}
+              onChange={e => {
+                setClaimPrompt(e.target.value)
+                claimDrafts.set(`${claimTarget.id}@${claimTarget.collection}`, {
+                  workspace: claimWorkspace,
+                  prompt: e.target.value,
+                })
+              }}
             />
 
             <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

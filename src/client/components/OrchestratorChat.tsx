@@ -27,6 +27,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { buildChatAddress, type ChatSessionMode } from '../../shared/chat-address.js'
+import {
+  computeChatPhase,
+  RefreshTickStore,
+  SessionRefCache,
+  type ReleasableReference,
+} from '../../shared/chat-panel.js'
 
 /** 一个可切换的会话目标。 */
 export interface ChatTarget {
@@ -62,6 +68,13 @@ export interface ChatPanelModel {
   requirementKey: string
   /** 当前焦点需求标题。 */
   requirementTitle: string
+  /**
+   * 当前焦点需求的工作目录（2026-11-03 问题 6）：
+   * 「创建编排会话」前置校验——未配置时先弹「设置工作目录」，填完才能创建。
+   */
+  requirementWorkspace?: string
+  /** 当前焦点需求的需求级提示词（可见性展示；创建会话的 bootstrap 由宿主实时读看板）。 */
+  requirementPrompt?: string
   /** 编排上下文摘要（`mode='off'` 时带 reason）。 */
   orchestrator?: { sessionId?: string; parentSessionId?: string; mode: 'continuable' | 'off'; reason?: string }
   /** 切换条。 */
@@ -165,6 +178,20 @@ class ParentStatusStore {
 /** 子会话父在线状态单例。 */
 export const parentStatusStore = new ParentStatusStore()
 
+/**
+ * 会话引用缓存（跨面板卸载/重挂复用同一引用，修「第二次进入对话框无内容」）。
+ *
+ * 机制与安全约束见 {@link SessionRefCache} 文档：原实现每次卸载都 release，
+ * 宿主随即销毁 Session 实例与已加载转录，回来只能整段重拉历史（大转录慢/失败即空白）。
+ */
+export const sessionRefCache = new SessionRefCache<ReleasableReference>()
+
+/**
+ * 「重新打开会话」刷新刻度（会话体 ↔ 对话框 effect 之间的极小通道）。
+ * 会话体检测到 `openState='error'` 后 `markStale` + `bump()`，对话框 effect 换新引用。
+ */
+export const sessionRefreshStore = new RefreshTickStore()
+
 /** React 侧订阅（与 {@link useChatModel} 同款手写订阅，理由见该函数注释）。 */
 function useParentStatus(): { childSessionId: string; parentOffline: boolean } {
   const [state, setState] = useState(() => parentStatusStore.get())
@@ -189,7 +216,7 @@ function useChatModel(): ChatPanelModel {
 
 /** 客户端半看得到的 `ctx.sessions` 结构面（不 import 宿主包）。 */
 interface SessionsFace {
-  retain?: (target: unknown, options: { source: string; signal: AbortSignal }) => {
+  retain?: (target: unknown, options: { source: string; signal?: AbortSignal }) => {
     sessionId?: unknown
     ready?: Promise<unknown>
     release?: () => void
@@ -230,12 +257,25 @@ interface ReferenceLike {
   release(): void
 }
 
+/** 订阅「重新打开会话」刷新刻度（手写订阅，理由见 {@link useChatModel}）。 */
+function useSessionRefreshTick(): number {
+  const [tick, setTick] = useState(() => sessionRefreshStore.getSnapshot())
+  useEffect(() => {
+    const un = sessionRefreshStore.subscribe(() => setTick(sessionRefreshStore.getSnapshot()))
+    setTick(sessionRefreshStore.getSnapshot())
+    return un
+  }, [])
+  return tick
+}
+
 /**
- * retain/release 一个子会话引用（AC1.4）。
+ * retain/release 一个子会话引用（AC1.4），经 {@link sessionRefCache} 复用。
  *
  * 纪律：
  *   - `ctx.sessions` **调用时**解析（不能闭包捕获，见项目纪律 6）；
- *   - 切换目标 / 卸载时 `release()`，且**只 release 一次**；
+ *   - 真正的 retain 只发生在缓存未命中时；卸载/切目标只做 `release` 归还，
+ *     grace 期内再次进入**直接复用同一引用**（同一 Session 实例、同一份已加载转录），
+ *     不再触发宿主整段重拉历史（问题 2 根因链，见 {@link SessionRefCache} 文档）；
  *   - retain 抛错（会话不存在 / 服务缺失）⇒ 返回 `{ error }`，由 UI 如实展示。
  */
 function useSessionReference(
@@ -246,6 +286,7 @@ function useSessionReference(
   const [state, setState] = useState<{ reference: ReferenceLike | null; error?: string }>({ reference: null })
   const childId = target?.childSessionId ?? ''
   const parentId = target?.parentSessionId ?? ''
+  const refreshTick = useSessionRefreshTick()
 
   useEffect(() => {
     if (!enabled || !childId) {
@@ -257,30 +298,34 @@ function useSessionReference(
       setState({ reference: null, error: '宿主未提供 sessions 服务，无法内嵌会话（可在侧边栏打开）' })
       return
     }
-    const ac = new AbortController()
-    let reference: ReferenceLike | null = null
+    // TS 控制流收窄不跨闭包边界（工厂回调里 `sessions.retain` 退回可选 ⇒ TS2722）：
+    // 守卫通过后先落到 retain 必选的结构面——同一对象引用，方法接收者不丢（纪律 6）。
+    const svc = sessions as { retain: NonNullable<SessionsFace['retain']> }
     try {
+      // 缓存命中即复用（不重新 retain）；未命中才经 factory 向宿主申请。
       // 有父会话 id 时用 SubagentAddress（宿主的"持久直接父地址"，最稳）；
       // 缺父会话时退回裸会话 id（`SessionTarget` 两种都接受）。
-      const targetRef = parentId ? { parentSessionId: parentId, childSessionId: childId, mode: target?.mode ?? 'unknown' } : childId
-      reference = (sessions.retain(targetRef, {
-        source: 'tfsOrchestratorChat',
-        signal: ac.signal,
-      }) ?? null) as ReferenceLike | null
+      const reference = sessionRefCache.acquire(childId, () => {
+        const targetRef = parentId
+          ? { parentSessionId: parentId, childSessionId: childId, mode: target?.mode ?? 'unknown' }
+          : childId
+        const acquired = (svc.retain(targetRef, {
+          source: 'tfsOrchestratorChat',
+        }) ?? null) as ReferenceLike | null
+        if (acquired === null) throw new Error('宿主 sessions.retain 未返回会话引用')
+        return acquired
+      })
       setState({ reference })
     } catch (e) {
       setState({ reference: null, error: `会话不可读：${e instanceof Error ? e.message : String(e)}` })
       return
     }
     return () => {
-      try {
-        reference?.release?.()
-      } catch {
-        // 释放失败不影响 UI；引用计数最终由宿主在 scope 销毁时回收。
-      }
+      // 只归还：grace 期内可被下一次 acquire 救回（复用同一 Session 实例与转录）。
+      sessionRefCache.release(childId)
     }
-    // 依赖只取 id：对象身份每次都新建，用它会让 effect 每次渲染都重跑并抖动引用计数。
-  }, [ctx, childId, parentId, enabled, target?.mode])
+    // 依赖只取 id 与刷新刻度：对象身份每次都新建，用它会让 effect 每次渲染都重跑并抖动引用计数。
+  }, [ctx, childId, parentId, enabled, target?.mode, refreshTick])
 
   return state
 }
@@ -300,6 +345,11 @@ export function OrchestratorChatBody(props: Record<string, unknown>): JSX.Elemen
   const useConversation = props['useConversation'] as
     | ((sel: (s: Record<string, unknown>) => unknown) => unknown)
     | undefined
+  /** 会话列表行 blank 标志（官方相位公式要用；`useSessions` 是框架标准注入）。 */
+  const useSessions = props['useSessions'] as
+    | ((sel: (s: Record<string, unknown>) => unknown) => unknown)
+    | undefined
+  const sessionId = props['sessionId'] as string | undefined
 
   const session = (useSession?.(v => v) ?? {}) as {
     blank?: boolean
@@ -307,9 +357,16 @@ export function OrchestratorChatBody(props: Record<string, unknown>): JSX.Elemen
     running?: boolean
     promptAttempted?: boolean
     openState?: string
+    openError?: { message?: string } | string | null
     subagent?: { address?: { mode?: string; childSessionId?: string }; parentAvailable?: boolean } | null
   }
   const conversation = (useConversation?.(v => v) ?? {}) as { activeTargets?: { size?: number } }
+  const sessionsList = (useSessions?.(v => v) ?? {}) as {
+    byId?: Record<string, { blank?: boolean } | undefined>
+  }
+  const summaryBlank = sessionId === undefined
+    ? undefined
+    : sessionsList.byId?.[sessionId]?.blank
 
   /**
    * 把「父会话是否在线」发布给对话框 chrome（父离线提示 + 回主会话入口要用）。
@@ -326,6 +383,26 @@ export function OrchestratorChatBody(props: Record<string, unknown>): JSX.Elemen
     return () => parentStatusStore.set({ childSessionId: '', parentOffline: false })
   }, [sub?.address?.childSessionId, parentOffline])
 
+  /**
+   * 相位：**逐字对齐官方 `ConversationSlotPanel`**（`shared/chat-panel.ts#computeChatPhase`）。
+   *
+   * 此前自拟口径缺 `settling`：会话重挂后历史窗口还在 loading 时被画成 `active`
+   * ⇒ 转录区空白、输入框浮到转录区顶部（2026-11-03 用户截图）。官方此时是
+   * `settling`（composer 隐藏、无错误布局），加载完成后自然落回 `active` 出内容。
+   */
+  const { phase, hero } = computeChatPhase({
+    activeTargetsSize: conversation.activeTargets?.size ?? 0,
+    session,
+    summaryBlank,
+  })
+
+  /** 「重新打开会话」：标记陈旧 + 通知对话框 effect 换新引用（不在这里直接 release，见缓存文档）。 */
+  const retryOpen = useCallback((): void => {
+    const child = sub?.address?.childSessionId
+    if (child) sessionRefCache.markStale(child)
+    sessionRefreshStore.bump()
+  }, [sub?.address?.childSessionId])
+
   if (typeof renderFactorySlot !== 'function') {
     return (
       <FallbackNotice
@@ -335,17 +412,55 @@ export function OrchestratorChatBody(props: Record<string, unknown>): JSX.Elemen
     )
   }
 
-  // phase 口径与官方一致：正在跑 / 有绑定 ⇒ active；空白会话 ⇒ hero；其余 active。
-  const active = (conversation.activeTargets?.size ?? 0) > 0
-    || (session.blank !== true && session.awaitingFirstTurn !== true)
-    || session.running === true
-  const hero = !active && session.promptAttempted !== true && session.openState === 'open'
+  /**
+   * 历史窗口打开/跟随失败（`SessionSnapshot.openState==='error'`）的可读降级。
+   *
+   * 不替换会话体（半程失败时已有部分转录可看），只在其上方挂横幅 + 重开入口 ——
+   * 与项目纪律「绝不白屏、绝不假装可用」一致：说清失败原因并给出可执行动作。
+   */
+  const openErrorBanner = session.openState === 'error'
+    ? (() => {
+        const raw = session.openError
+        const reason = typeof raw === 'string'
+          ? raw
+          : (raw && typeof raw === 'object' && typeof raw.message === 'string' ? raw.message : '未知原因')
+        return (
+          <div
+            data-tfs-chat-open-error=""
+            style={{
+              padding: '7px 10px',
+              fontSize: 11,
+              lineHeight: 1.6,
+              color: '#991b1b',
+              background: '#fef2f2',
+              borderBottom: '1px solid #fecaca',
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>会话历史加载失败，下方可能只有部分记录。</div>
+            <div style={{ color: '#b91c1c' }}>原因：{reason}</div>
+            <button
+              type="button"
+              style={{
+                ...buttonStyle,
+                marginTop: 6,
+                borderColor: '#fca5a5',
+                background: '#fff',
+              }}
+              onClick={retryOpen}
+            >
+              重新打开会话
+            </button>
+          </div>
+        )
+      })()
+    : null
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      {openErrorBanner}
       {renderFactorySlot(
         'conversation.content',
-        { variant: 'embedded', phase: hero ? 'hero' : 'active', hero },
+        { variant: 'embedded', phase, hero },
         {
           slots: { views: FixedChatView },
         },
@@ -469,7 +584,16 @@ function ParentOfflineNotice(props: {
 export function OrchestratorChatDock(props: {
   kit: ChatKit
   ctx: ClientContext
-  onEnsureOrchestrator?: (requirementKey: string) => Promise<{ ok: boolean; reason?: string }>
+  /**
+   * 「创建编排会话」按钮回调（走宿主路由）。
+   *
+   * 2026-11-03 问题 6：`opts.workspace` = 用户在「设置工作目录」里填的值（需求尚未配置时），
+   * 接线层会先把它落进需求再创建会话（编排 bootstrap 的简报/工作目录要读它）。
+   */
+  onEnsureOrchestrator?: (
+    requirementKey: string,
+    opts?: { workspace?: string },
+  ) => Promise<{ ok: boolean; reason?: string }>
   onClose?: () => void
 }): JSX.Element | null {
   const model = useChatModel()
@@ -478,6 +602,8 @@ export function OrchestratorChatDock(props: {
   const { reference, error } = useSessionReference(props.ctx, target, model.visible)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string>('')
+  /** 问题 6：需求未配置工作目录时的补填输入（创建编排会话的前置条件）。 */
+  const [wsInput, setWsInput] = useState('')
   const parentStatus = useParentStatus()
 
   /**
@@ -550,23 +676,53 @@ export function OrchestratorChatDock(props: {
           }
           action={
             props.onEnsureOrchestrator
-              ? (
-                <button
-                  type="button"
-                  style={buttonStyle}
-                  disabled={busy}
-                  onClick={() => {
-                    setBusy(true)
-                    setNotice('')
-                    void props
-                      .onEnsureOrchestrator!(model.requirementKey)
-                      .then(r => setNotice(r.ok ? '编排会话已创建' : `创建失败：${r.reason ?? '未知原因'}`))
-                      .finally(() => setBusy(false))
-                  }}
-                >
-                  {busy ? '创建中…' : '创建编排会话'}
-                </button>
-              )
+              ? (() => {
+                  // 问题 6：没有工作目录就先补填 —— 编排 bootstrap（简报/代码库定位）要读它。
+                  const hasWs = Boolean((model.requirementWorkspace ?? '').trim())
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                      {!hasWs && (
+                        <>
+                          <div style={{ fontSize: 12, color: '#b45309' }}>
+                            创建编排会话前需先设置工作目录（简报与子 agent 代码库定位都依赖它）：
+                          </div>
+                          <input
+                            style={{
+                              padding: '6px 8px',
+                              borderRadius: 6,
+                              border: '1px solid #d1d5db',
+                              fontSize: 13,
+                              minWidth: 240,
+                            }}
+                            placeholder="绝对路径，如 D:\\code\\his"
+                            value={wsInput}
+                            onChange={e => setWsInput(e.target.value)}
+                          />
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        style={buttonStyle}
+                        disabled={busy}
+                        onClick={() => {
+                          const ws = wsInput.trim() || (model.requirementWorkspace ?? '').trim()
+                          if (!ws) {
+                            setNotice('请先填写工作目录，再创建编排会话')
+                            return
+                          }
+                          setBusy(true)
+                          setNotice('')
+                          void props
+                            .onEnsureOrchestrator!(model.requirementKey, { workspace: ws })
+                            .then(r => setNotice(r.ok ? '编排会话已创建' : `创建失败：${r.reason ?? '未知原因'}`))
+                            .finally(() => setBusy(false))
+                        }}
+                      >
+                        {busy ? '创建中…' : '创建编排会话'}
+                      </button>
+                    </div>
+                  )
+                })()
               : undefined
           }
         />
@@ -630,7 +786,7 @@ export function OrchestratorChatDock(props: {
               ← 返回主 agent
             </button>
             <span style={{ fontSize: 11, color: '#9ca3af', alignSelf: 'center' }}>
-              ONE-SHOT 子会话结束后不可继续输入；需要补充指令请用任务详情里的「追问」。
+              任务子会话的消息箱由编排流程控制，此处只用于查看记录；需要补充指令请用任务详情里的「追问」。
             </span>
           </div>
         )}
@@ -723,8 +879,8 @@ export function OrchestratorChatDock(props: {
 
       {/*
         父会话离线提示（#3）。只在**编排主 agent**（key='orchestrator'）上出现：
-        编排会话是主会话的 continuable 子会话，任务子会话（ONE-SHOT）本就不支持续输入，
-        对它们提示"父会话离线"是噪音。
+        编排会话是主会话的 continuable 子会话；任务子会话虽然也可能是 continuable，
+        但它们由编排流程投递消息（不靠面板手打），对它们提示"父会话离线"是噪音。
         判定用 `parentStatus`（由会话体内的 useSession 发布）+ 当前 target 的 childId 对齐，
         避免切换瞬间拿上一个会话的状态去误判新会话。
       */}

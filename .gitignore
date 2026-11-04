@@ -33,3 +33,8 @@ events.jsonl
 .agent-teams/
 .specify/
 .dsh-file-drop/
+
+# 临时 e2e 测试脚本与本地探针（日期命名，不随仓库发布）
+scripts/.e2e-ui/
+scripts/.vitest-*.json
+scripts/e2e-110*.mjs

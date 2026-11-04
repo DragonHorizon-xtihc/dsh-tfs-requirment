@@ -85,6 +85,23 @@ describe('summarizeRequirementExec（问题 4：需求行执行状态）', () =>
     expect(summarizeRequirementExec({}, [])).toEqual({ text: '未拆解', tone: 'todo' })
   })
 
+  it('无任务但挂有定时条目 → 定时待执行 HH:mm（2026-11-03 问题 3）', () => {
+    // 时间段文案含本地 HH:mm，只断言前缀与色调（具体分钟随运行时刻变）。
+    const s = summarizeRequirementExec({}, [], '2026-11-03T14:30:00.000Z')
+    expect(s.tone).toBe('pending')
+    expect(s.text.startsWith('定时待执行 ')).toBe(true)
+    // 需求级已完成仍然优先（定时不抢已完成的展示）。
+    expect(summarizeRequirementExec({ execState: 'completed' }, [], '2026-11-03T14:30:00.000Z')).toEqual({
+      text: '已完成',
+      tone: 'done',
+    })
+  })
+
+  it('已有任务时定时不改派生（任务集合口径优先，定时在专区展示）', () => {
+    const s = summarizeRequirementExec({}, [t('pending', 'queued')], '2026-11-03T14:30:00.000Z')
+    expect(s).toEqual({ text: '待办 1', tone: 'pending' })
+  })
+
   it('有任务在跑 → 执行中 N（优先级高于失败/待办）', () => {
     const s = summarizeRequirementExec({}, [t('in_progress', 'running'), t('in_progress', 'failed'), t('pending', 'queued')])
     expect(s).toEqual({ text: '执行中 1', tone: 'running' })

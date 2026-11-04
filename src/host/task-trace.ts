@@ -18,6 +18,7 @@
  */
 import type { Board } from '../core/board/board.js'
 import type { TaskTraceEntry, TaskTraceResult } from '../shared/contracts.js'
+import type { ChildToolCall } from '../shared/capability-plan.js'
 import { filterEventsForTurn, mapTraceEvents, summarizeTrace } from './trace-mapper.js'
 
 /** observeSession 的最小结构面（避免硬依赖宿主 branded 类型，实际服务满足该形状）。 */
@@ -63,7 +64,6 @@ function releaseObservation(obs: ObservationLike | undefined): void {
 
 export class TaskTraceService {
   constructor(private readonly deps: TaskTraceServiceDeps) {}
-
   /**
    * 读取某次任务尝试的执行轨迹。
    * @param taskId - 看板任务 id。
@@ -135,5 +135,111 @@ export class TaskTraceService {
     } finally {
       releaseObservation(obs)
     }
+  }
+}
+
+/**
+ * 读取某子会话的 `tool/call` 事件切片（2026-10-29 诉求 3/4 的**验收**数据源）。
+ *
+ * ## 为什么需要单独一个入口
+ *
+ * 任务落定后要回答"所选技能 / MCP 到底用了没有"，唯一可信的证据是子会话日志里的
+ * `tool/call`（`packages/session/src/...` 的会话事件类型；本插件 `trace-mapper.ts:211`
+ * 已按同名字段解析工具名与入参）。`TaskTraceService` 面向 UI 时间线（会被截断、按 turn 过滤），
+ * 不适合做机验；这里只做**最朴素的**事件扫描。
+ *
+ * ## 降级口径（与轨迹服务一致）
+ *
+ * `sessionQuery` 缺失、会话已被清理、观察抛错 ⇒ 返回 `undefined`（= 不可观测）。
+ * 返回 `[]` 表示"读到了会话，确实一次工具都没调" —— 两者语义不同，调用方据此决定是否判不达标。
+ *
+ * @param sessionQuery - 宿主 `sessionQuery` 服务（未知形状，内部做能力探测）。
+ * @param sessionId - 子会话 id。
+ * @returns 工具调用切片；不可观测时 `undefined`。
+ */
+export async function readChildToolCallsFrom(
+  sessionQuery: unknown,
+  sessionId: string,
+): Promise<ChildToolCall[] | undefined> {
+  const service = sessionQuery as SessionQueryLike | undefined
+  if (!service || typeof service.observeSession !== 'function' || !sessionId) return undefined
+  let obs: ObservationLike | undefined
+  try {
+    obs = await service.observeSession(sessionId, { projectionMode: 'none' })
+  } catch {
+    return undefined
+  }
+  try {
+    const out: ChildToolCall[] = []
+    for (const raw of obs?.events ?? []) {
+      const event = raw as { type?: unknown; data?: unknown }
+      if (event?.type !== 'tool/call') continue
+      const data = event.data as { name?: unknown; arguments?: unknown }
+      const name = typeof data?.name === 'string' ? data.name : ''
+      if (!name) continue
+      const args = typeof data?.arguments === 'string'
+        ? data.arguments
+        : data?.arguments === undefined
+          ? ''
+          : (() => {
+              try {
+                return JSON.stringify(data.arguments)
+              } catch {
+                return ''
+              }
+            })()
+      out.push({ name, args })
+    }
+    return out
+  } finally {
+    releaseObservation(obs)
+  }
+}
+
+/**
+ * 读取某子会话**模型真实收到的工具表**（`request/header` 事件里的 `tools[].name`）。
+ *
+ * ## 为什么需要它（2026-10-30 现场纠正）
+ *
+ * 现场子代理声称"MCP 工具未注入本会话的工具列表"，据此绕开 MCP 自建 REST 脚本。
+ * 但解包该子会话的 `request/header` 后发现：**模型收到的工具表有 455 个工具，
+ * `mcp__tfs-mcp__*`（含 tfs_add_tags / tfs_update_workitem）与
+ * `mcp__winex_peis_knowledge__*` 全都在里面**——"未注入"是模型的错误自述，不是装配事实。
+ *
+ * 因此验收不能只信输出文本：要把**请求工具表**作为事实源，用于识别
+ * "工具实际存在却谎称不存在"（`mcpClaimedMissing`）。这与 {@link readChildToolCallsFrom}
+ * 的分工是：那个回答"它调了什么"，本函数回答"它能看到什么"。
+ *
+ * 降级口径同轨迹服务：sessionQuery 缺失/会话不可读 ⇒ `undefined`（无法核实，不据此判罚）。
+ *
+ * @param sessionQuery - 宿主 `sessionQuery` 服务。
+ * @param sessionId - 子会话 id。
+ * @returns 工具全名清单（多次请求取并集）；不可观测时 `undefined`。
+ */
+export async function readChildToolSurfaceFrom(
+  sessionQuery: unknown,
+  sessionId: string,
+): Promise<string[] | undefined> {
+  const service = sessionQuery as SessionQueryLike | undefined
+  if (!service || typeof service.observeSession !== 'function' || !sessionId) return undefined
+  let obs: ObservationLike | undefined
+  try {
+    obs = await service.observeSession(sessionId, { projectionMode: 'none' })
+  } catch {
+    return undefined
+  }
+  try {
+    const names = new Set<string>()
+    for (const raw of obs?.events ?? []) {
+      const event = raw as { type?: unknown; data?: unknown }
+      if (event?.type !== 'request/header') continue
+      const header = (event.data as { header?: { tools?: Array<{ name?: unknown }> } })?.header
+      for (const tool of header?.tools ?? []) {
+        if (typeof tool?.name === 'string' && tool.name.length > 0) names.add(tool.name)
+      }
+    }
+    return [...names]
+  } finally {
+    releaseObservation(obs)
   }
 }

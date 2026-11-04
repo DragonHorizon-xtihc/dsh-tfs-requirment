@@ -1137,6 +1137,7 @@ export class BoardService {
       skills?: string[]
       mcp?: string[]
       preset?: string
+      workflow?: string
       maxDepth?: number
       maxTokens?: number
     },
@@ -1148,12 +1149,14 @@ export class BoardService {
     // 冻结配置是**整体替换**语义：只传一部分时用当前值补齐（避免把没动的字段清空）。
     // spec 009：modelProvider 与 model 同属模型路由，任一出现即视为要重写冻结配置。
     // 问题 3：preset / maxDepth / maxTokens 同理，任一出现也视为要重写冻结配置。
+    // 2026-10-29：workflow（诉求 4）同理。
     const wantsFrozen =
       patch.model !== undefined ||
       patch.modelProvider !== undefined ||
       patch.skills !== undefined ||
       patch.mcp !== undefined ||
       patch.preset !== undefined ||
+      patch.workflow !== undefined ||
       patch.maxDepth !== undefined ||
       patch.maxTokens !== undefined
     let workspacePatch: { workspace?: string | null } = {}
@@ -1173,6 +1176,17 @@ export class BoardService {
       const frozenPreset = patch.preset !== undefined ? patch.preset.trim() : (task.frozenConfig.preset ?? '')
       const frozenMaxDepth = patch.maxDepth ?? task.frozenConfig.maxDepth ?? 0
       const frozenMaxTokens = patch.maxTokens ?? task.frozenConfig.maxTokens ?? 0
+      const nextSkills = patch.skills ?? [...task.frozenConfig.skills]
+      // 2026-10-29（诉求 4）：工作流必须在技能清单内 —— 工作流就是一个技能。
+      // 允许"清空工作流"（空串），但不允许指向一个没选的技能：那会让派发时
+      // 既加载不到正文、又生成一份无步骤可执行的强制流程，属于自相矛盾的配置。
+      const frozenWorkflow = patch.workflow !== undefined ? patch.workflow.trim() : (task.frozenConfig.workflow ?? '')
+      if (frozenWorkflow.length > 0 && !nextSkills.includes(frozenWorkflow)) {
+        return {
+          ok: false,
+          reason: `工作流「${frozenWorkflow}」不在该任务的技能清单内：请先在「技能」里选中它（工作流从技能中选择）`,
+        }
+      }
       const next = this.deps.board.updateTask(
         taskId,
         {
@@ -1183,9 +1197,10 @@ export class BoardService {
                 frozenConfig: {
                   model: frozenModel,
                   ...(frozenProvider ? { modelProvider: frozenProvider } : {}),
-                  skills: patch.skills ?? [...task.frozenConfig.skills],
+                  skills: nextSkills,
                   mcp: patch.mcp ?? [...task.frozenConfig.mcp],
                   ...(frozenPreset ? { preset: frozenPreset } : {}),
+                  ...(frozenWorkflow.length > 0 ? { workflow: frozenWorkflow } : {}),
                   ...(frozenMaxDepth > 0 ? { maxDepth: frozenMaxDepth } : {}),
                   ...(frozenMaxTokens > 0 ? { maxTokens: frozenMaxTokens } : {}),
                 },
@@ -1387,12 +1402,13 @@ export class BoardService {
    * - 单个任务启动失败（revision 漂移 / 依赖刚变化）只记事件、不影响其余就绪任务。
    *
    * @param limit - 并发上限（通常传配置的 maxConcurrentRequirements）。
+   * @param requirementKey - 只启动该需求名下的就绪任务（2026-11-03 问题 5 串行编排入口）；缺省全局。
    */
-  autoStartRunnable(limit: number): { ok: true; taskIds: string[] } {
+  autoStartRunnable(limit: number, requirementKey?: string): { ok: true; taskIds: string[] } {
     const taskIds: string[] = []
     // Board.pickRunnable 返回就绪任务的 **id**（内部已扣除在跑/待确认占用的并发槽，
     // 且只选 pending && 依赖全 completed），这里再逐个取当前 revision 启动。
-    const runnableIds = this.deps.board.pickRunnable(limit >= 1 ? Math.floor(limit) : 1)
+    const runnableIds = this.deps.board.pickRunnable(limit >= 1 ? Math.floor(limit) : 1, requirementKey)
     for (const id of runnableIds) {
       try {
         const snapshot = this.deps.board.snapshot.tasks[id]

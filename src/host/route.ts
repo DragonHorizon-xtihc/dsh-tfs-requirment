@@ -337,6 +337,8 @@ export function createTaskUpdateHandler(
       skills?: string[]
       mcp?: string[]
       preset?: string
+      /** 2026-10-29（诉求 4）：工作流技能名（必须在 skills 内）。 */
+      workflow?: string
       maxDepth?: number
       maxTokens?: number
       expectedRevision?: number
@@ -350,7 +352,7 @@ export function createTaskUpdateHandler(
       }
       input[field] = v as string | null
     }
-    for (const field of ['model', 'modelProvider', 'preset'] as const) {
+    for (const field of ['model', 'modelProvider', 'preset', 'workflow'] as const) {
       if (body[field] === undefined) continue
       if (typeof body[field] !== 'string') {
         sendError(res, 400, `${field} 必须是字符串`)
@@ -449,6 +451,81 @@ export function createRoleDeleteHandler(
       return
     }
     sendJson(res, 200, api.deleteRole(value.id, value.force === true))
+  }
+}
+
+/** 技能/MCP 分组清单处理器（GET，2026-11-03 用户诉求）。 */
+export function createSkillGroupsListHandler(api: HostApi): (req: IncomingMessage, res: ServerResponse) => void {
+  return (_req, res) => {
+    sendJson(res, 200, { ok: true, groups: api.listSkillGroups() })
+  }
+}
+
+/** 保存技能/MCP 分组处理器（POST，body = SkillMcpGroup）。 */
+export function createSkillGroupSaveHandler(
+  api: HostApi,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.setHeader('allow', 'POST')
+      sendError(res, 405, '仅支持 POST')
+      return
+    }
+    const body = await readJsonBody(req)
+    if (!body.ok) {
+      sendError(res, body.error === 'too_large' ? 413 : 400, '请求体不是合法 JSON 或过大')
+      return
+    }
+    const group = body.value as Record<string, unknown> | null
+    if (typeof group !== 'object' || group === null || typeof group.id !== 'string' || group.id.length === 0) {
+      sendError(res, 400, '分组须含非空字符串 id')
+      return
+    }
+    if (typeof group.name !== 'string' || group.name.trim().length === 0) {
+      sendError(res, 400, '分组名必填')
+      return
+    }
+    // skills/mcp 必须真的是字符串数组（与角色保存同纪律：字符串会在客户端 .map 时抛错）。
+    const notList = (['skills', 'mcp'] as const).find(
+      key => group[key] !== undefined && (!Array.isArray(group[key]) || group[key].some((v: unknown) => typeof v !== 'string')),
+    )
+    if (notList !== undefined) {
+      sendError(res, 400, `分组字段 ${notList} 必须是字符串数组`)
+      return
+    }
+    sendJson(res, 200, api.saveSkillGroup({
+      id: group.id,
+      name: group.name as string,
+      description: typeof group.description === 'string' ? group.description : undefined,
+      skills: (group.skills as string[] | undefined) ?? [],
+      mcp: (group.mcp as string[] | undefined) ?? [],
+      createdAt: typeof group.createdAt === 'string' ? group.createdAt : '',
+      updatedAt: typeof group.updatedAt === 'string' ? group.updatedAt : '',
+    }))
+  }
+}
+
+/** 删除技能/MCP 分组处理器（POST，body = { id }）。 */
+export function createSkillGroupDeleteHandler(
+  api: HostApi,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.setHeader('allow', 'POST')
+      sendError(res, 405, '仅支持 POST')
+      return
+    }
+    const body = await readJsonBody(req)
+    if (!body.ok) {
+      sendError(res, body.error === 'too_large' ? 413 : 400, '请求体不是合法 JSON 或过大')
+      return
+    }
+    const value = body.value as { id?: unknown } | null
+    if (typeof value !== 'object' || value === null || typeof value.id !== 'string' || value.id.length === 0) {
+      sendError(res, 400, 'id 必填且为字符串')
+      return
+    }
+    sendJson(res, 200, api.deleteSkillGroup(value.id))
   }
 }
 
@@ -664,6 +741,11 @@ export function createClaimHandler(api: HostApi): (req: IncomingMessage, res: Se
         ...(typeof body['tag'] === 'boolean' ? { tag: body['tag'] } : {}),
         // 本地代码库路径（本地补充字段，非 TFS 字段）：透传给 BoardService 做 fail-loud 校验。
         ...(typeof body['workspace'] === 'string' ? { workspace: body['workspace'] } : {}),
+        // 需求级提示词（本地补充字段）：领取弹框里填的「增加提示词」。
+        // ⚠️ 2026-11-03 修复：此前这里只透传 workspace 而**丢掉 prompt** ——
+        // 客户端（RequirementPool）发了、BoardService 也会存，但路由层没转发 ⇒
+        // 领取入池填的提示词从未落库，任务中心「编辑」自然看不到（问题 1）。
+        ...(typeof body['prompt'] === 'string' ? { prompt: body['prompt'] } : {}),
       }),
     )
   })
@@ -856,6 +938,86 @@ export function createOrchestratorEnsureHandler(
   }
 }
 
+/**
+ * 开始编排处理器（2026-11-03 问题 4/5）。
+ *
+ * POST body `{ requirementKey, mode: 'now'|'at', dueAt?, sequential? }`：
+ * 'now' = 立刻按依赖顺序启动子 Agent 链；'at' = 登记定时（精确到分，持久化 + 重启补跑）。
+ */
+export function createOrchestrationStartHandler(
+  api: HostApi,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return postJsonHandler(async (body, res) => {
+    const requirementKey = body['requirementKey']
+    if (typeof requirementKey !== 'string' || requirementKey.length === 0) {
+      sendError(res, 400, 'requirementKey 必填')
+      return
+    }
+    const mode = body['mode'] === 'at' ? 'at' : 'now'
+    sendJson(
+      res,
+      200,
+      await api.orchestrationStart({
+        requirementKey,
+        mode,
+        ...(typeof body['dueAt'] === 'string' ? { dueAt: body['dueAt'] } : {}),
+        ...(body['sequential'] === true ? { sequential: true } : {}),
+      }),
+    )
+  })
+}
+
+/** 定时执行清单处理器（GET）。 */
+export function createSchedulesHandler(
+  api: HostApi,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    if (req.method !== 'GET') {
+      res.setHeader('allow', 'GET')
+      sendError(res, 405, '仅支持 GET')
+      return
+    }
+    sendJson(res, 200, { ok: true, entries: api.listSchedules() })
+  }
+}
+
+/** 取消定时执行处理器（POST body `{ id }`）。 */
+export function createScheduleCancelHandler(
+  api: HostApi,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return postJsonHandler((body, res) => {
+    const id = body['id']
+    if (typeof id !== 'string' || id.length === 0) {
+      sendError(res, 400, 'id 必填')
+      return
+    }
+    const cancelled = api.cancelSchedule(id)
+    sendJson(res, 200, { ok: cancelled, ...(cancelled ? {} : { reason: '无此调度条目（可能已触发或已取消）' }) })
+  })
+}
+
+/**
+ * 修改定时执行到点时刻处理器（POST body `{ id, dueAt }`；2026-11-03 问题 3）。
+ * 同 id 重登记语义：覆盖旧条目并重新武装定时器。
+ */
+export function createScheduleUpdateHandler(
+  api: HostApi,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return postJsonHandler((body, res) => {
+    const id = body['id']
+    const dueAt = body['dueAt']
+    if (typeof id !== 'string' || id.length === 0) {
+      sendError(res, 400, 'id 必填')
+      return
+    }
+    if (typeof dueAt !== 'string' || dueAt.length === 0) {
+      sendError(res, 400, 'dueAt 必填（ISO 8601，精确到分）')
+      return
+    }
+    sendJson(res, 200, api.updateSchedule(id, dueAt))
+  })
+}
+
 /** 确认回写处理器。 */
 export function createConfirmWriteHandler(
   api: HostApi,
@@ -1032,6 +1194,18 @@ export function registerTfsRoutes(ctx: Context, api: HostApi): void {
       `tfs-requirment: POST ${TFS_ROUTES.roleDelete}`,
     )
     ctx.effect(
+      () => web.register({ kind: 'exact', path: TFS_ROUTES.skillGroups, handler: createSkillGroupsListHandler(api) }),
+      `tfs-requirment: GET ${TFS_ROUTES.skillGroups}`,
+    )
+    ctx.effect(
+      () => web.register({ kind: 'exact', path: TFS_ROUTES.skillGroupSave, handler: createSkillGroupSaveHandler(api) }),
+      `tfs-requirment: POST ${TFS_ROUTES.skillGroupSave}`,
+    )
+    ctx.effect(
+      () => web.register({ kind: 'exact', path: TFS_ROUTES.skillGroupDelete, handler: createSkillGroupDeleteHandler(api) }),
+      `tfs-requirment: POST ${TFS_ROUTES.skillGroupDelete}`,
+    )
+    ctx.effect(
       () => web.register({ kind: 'exact', path: TFS_ROUTES.board, handler: createBoardHandler(api) }),
       `tfs-requirment: GET ${TFS_ROUTES.board}`,
     )
@@ -1079,6 +1253,29 @@ export function registerTfsRoutes(ctx: Context, api: HostApi): void {
           handler: createOrchestratorEnsureHandler(api),
         }),
       `tfs-requirment: POST ${TFS_ROUTES.orchestratorEnsure}`,
+    )
+    // 2026-11-03 问题 4/5：开始编排（立刻/定时）+ 调度清单与取消。
+    ctx.effect(
+      () =>
+        web.register({
+          kind: 'exact',
+          path: TFS_ROUTES.orchestrationStart,
+          handler: createOrchestrationStartHandler(api),
+        }),
+      `tfs-requirment: POST ${TFS_ROUTES.orchestrationStart}`,
+    )
+    ctx.effect(
+      () => web.register({ kind: 'exact', path: TFS_ROUTES.schedules, handler: createSchedulesHandler(api) }),
+      `tfs-requirment: GET ${TFS_ROUTES.schedules}`,
+    )
+    ctx.effect(
+      () => web.register({ kind: 'exact', path: TFS_ROUTES.scheduleCancel, handler: createScheduleCancelHandler(api) }),
+      `tfs-requirment: POST ${TFS_ROUTES.scheduleCancel}`,
+    )
+    // 2026-11-03 问题 3：修改定时执行的到点时刻。
+    ctx.effect(
+      () => web.register({ kind: 'exact', path: TFS_ROUTES.scheduleUpdate, handler: createScheduleUpdateHandler(api) }),
+      `tfs-requirment: POST ${TFS_ROUTES.scheduleUpdate}`,
     )
     ctx.effect(
       () => web.register({ kind: 'exact', path: TFS_ROUTES.health, handler: createHealthHandler(api) }),

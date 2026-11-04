@@ -53,10 +53,23 @@ export interface TfsRequirmentConfig {
    */
   defaultMaxTokens: number
   /**
-   * 单条任务运行总时长看门狗（分钟，问题 1：防止死循环永久占用并发槽）。
+   * 单条任务运行**总时长**看门狗（分钟，问题 1：防止死循环永久占用并发槽）。
    * 超时后中止子 run 并把任务收口为失败；0 = 不启用总时长看门狗（仍保留启动/排队超时）。
+   *
+   * 2026-11-04 默认值 30 → 120：真机证据（`2059017@WN_HIS#manual-通用工程师-20261103162007`）
+   * 显示一次「PM 分析」就跑了 28m51s，随即被 30 分钟硬墙掐死；而另一轮在 30 分钟整被终止时，
+   * 子 agent 其实**刚刚产出完整报告**（`turn end reason=aborted`，报告文本已在轨迹里）。
+   * 即默认值是"把正常长任务判成死循环"的来源，不是防死循环的合理尺度。
    */
   runTimeoutMinutes: number
+  /**
+   * 到达 {@link runTimeoutMinutes} 时的**活性宽限**（分钟，2026-11-04）。
+   *
+   * 到点时先探一次子会话活动：若最近仍有新事件（模型调用/工具调用在推进），说明是正常长任务
+   * 而不是空转 ⇒ 再宽限这么久才终止（只宽限一次，总时长上界 = runTimeout + grace）。
+   * 最近没有活动 ⇒ 直接按"疑似失控空转"终止。0 = 不探测、到点即终止（旧行为）。
+   */
+  runTimeoutGraceMinutes: number
   /**
    * 是否启用「编排主 agent」（spec 010 US1/US2）。
    *
@@ -181,7 +194,8 @@ export const Config: z<TfsRequirmentConfig> = z.object({
   autoWriteBack: z.boolean().default(true),
   defaultMaxDepth: z.number().default(1),
   defaultMaxTokens: z.number().default(0),
-  runTimeoutMinutes: z.number().default(30),
+  runTimeoutMinutes: z.number().default(120),
+  runTimeoutGraceMinutes: z.number().default(30),
   orchestratorEnabled: z.boolean().default(true),
   orchestratorProvider: z.string().default(''),
   reuseTaskSessions: z.boolean().default(true),
@@ -239,6 +253,7 @@ export function validateConfig(config: TfsRequirmentConfig): ConfigValidationErr
     ['defaultMaxDepth', '委派深度上限'],
     ['defaultMaxTokens', '单次输出 token 上限'],
     ['runTimeoutMinutes', '任务运行看门狗（分钟）'],
+    ['runTimeoutGraceMinutes', '看门狗到点活性宽限（分钟）'],
     ['summarizeTimeoutSeconds', '编排归纳硬超时（秒）'],
     ['summarizeGraceSeconds', '编排归纳放行宽限（秒）'],
     ['finalizeTimeoutSeconds', '编排最终总结硬超时（秒）'],

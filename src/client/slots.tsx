@@ -34,6 +34,7 @@ import {
 } from './components/SidePanel.js'
 import { RequirementPool } from './components/RequirementPool.js'
 import { RoleSettings } from './components/RoleSettings.js'
+import { SkillGroupPanel } from './components/SkillGroupPanel.js'
 import { TaskCenter } from './components/TaskCenter.js'
 import {
   OrchestratorChatBody,
@@ -78,7 +79,9 @@ import type {
   RequirementExecStateResult,
   RequirementSummary,
   RoleDefinition,
+  ScheduleEntryView,
   SetRequirementExecStateInput,
+  SkillMcpGroup,
   TargetRef,
   TaskAction,
   TaskOpResult,
@@ -474,6 +477,8 @@ class HttpHostBridge implements HostBridge {
         taskId?: string
         createdTask?: boolean
         workspace?: string
+        scheduled?: boolean
+        scheduledAt?: string
       }>(TFS_ROUTES.dispatch, {
         draft: req,
         targetWorkItem: target?.targetWorkItem ?? this.last?.targetWorkItem ?? '—',
@@ -482,12 +487,16 @@ class HttpHostBridge implements HostBridge {
       })
       // 问题 1/6：把宿主回带的 taskId / createdTask / workspace 原样透出 ——
       // 执行面板要显示"创建了哪条任务、实际用哪个工作目录"，而不是它以为的那个。
+      // 2026-11-03 问题 3：**scheduled / scheduledAt 必须一并透传** —— 此前被静默丢弃，
+      // 定时登记被当成"立刻执行"走成功文案（已发起执行（并发分发中）），到点信息全丢。
       return {
         ok: body.ok,
         ...(body.reason ? { reason: body.reason } : {}),
         ...(body.taskId ? { taskId: body.taskId } : {}),
         ...(body.createdTask ? { createdTask: true } : {}),
         ...(body.workspace ? { workspace: body.workspace } : {}),
+        ...(body.scheduled ? { scheduled: true } : {}),
+        ...(body.scheduledAt ? { scheduledAt: body.scheduledAt } : {}),
       }
     } catch {
       return { ok: false, reason: '无法连接到宿主分发服务（请确认插件已在 profile 启用并重启界面）' }
@@ -629,6 +638,34 @@ class HttpHostBridge implements HostBridge {
     }
   }
 
+  // ── 技能/MCP 分组（2026-11-03 用户诉求） ──
+
+  async listSkillGroups(): Promise<SkillMcpGroup[]> {
+    try {
+      const res = await fetch(TFS_ROUTES.skillGroups, { method: 'GET', cache: 'no-store' })
+      const body = (await res.json()) as { groups?: SkillMcpGroup[] }
+      return body.groups ?? []
+    } catch {
+      return []
+    }
+  }
+
+  async saveSkillGroup(group: SkillMcpGroup): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      return await postJson<{ ok: boolean; reason?: string }>(TFS_ROUTES.skillGroupSave, group)
+    } catch {
+      return { ok: false, reason: '无法连接到宿主技能分组服务' }
+    }
+  }
+
+  async deleteSkillGroup(id: string): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      return await postJson<{ ok: boolean; reason?: string }>(TFS_ROUTES.skillGroupDelete, { id })
+    } catch {
+      return { ok: false, reason: '无法连接到宿主技能分组服务' }
+    }
+  }
+
   async getBoard(): Promise<BoardSnapshotView> {
     try {
       const res = await fetch(TFS_ROUTES.board, { method: 'GET', cache: 'no-store' })
@@ -657,6 +694,55 @@ class HttpHostBridge implements HostBridge {
       )
     } catch {
       return { ok: false, reason: '无法连接到宿主拆解服务' }
+    }
+  }
+
+  /** 开始编排（2026-11-03 问题 4/5）：立刻链式 / 定时（精确到分）。 */
+  async orchestrationStart(input: {
+    requirementKey: string
+    mode: 'now' | 'at'
+    dueAt?: string
+    sequential?: boolean
+  }): Promise<{ ok: boolean; reason?: string; scheduledAt?: string }> {
+    try {
+      return await postJson<{ ok: boolean; reason?: string; scheduledAt?: string }>(
+        TFS_ROUTES.orchestrationStart,
+        input,
+      )
+    } catch {
+      return { ok: false, reason: '无法连接到宿主编排服务' }
+    }
+  }
+
+  /** 定时执行条目清单（问题 4/5；2026-11-03 问题 3 类型化）。 */
+  async listSchedules(): Promise<{ ok: boolean; entries?: ScheduleEntryView[]; reason?: string }> {
+    try {
+      const res = await fetch(TFS_ROUTES.schedules, { method: 'GET', cache: 'no-store' })
+      if (!res.ok) return { ok: false, reason: `调度清单接口返回 ${res.status}` }
+      return (await res.json()) as { ok: boolean; entries?: ScheduleEntryView[]; reason?: string }
+    } catch {
+      return { ok: false, reason: '无法连接到宿主调度服务' }
+    }
+  }
+
+  /** 取消一条定时执行（问题 4/5）。 */
+  async cancelSchedule(id: string): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      return await postJson<{ ok: boolean; reason?: string }>(TFS_ROUTES.scheduleCancel, { id })
+    } catch {
+      return { ok: false, reason: '无法连接到宿主调度服务' }
+    }
+  }
+
+  /** 修改定时执行的到点时刻（2026-11-03 问题 3）。 */
+  async updateSchedule(id: string, dueAt: string): Promise<{ ok: boolean; reason?: string; scheduledAt?: string }> {
+    try {
+      return await postJson<{ ok: boolean; reason?: string; scheduledAt?: string }>(TFS_ROUTES.scheduleUpdate, {
+        id,
+        dueAt,
+      })
+    } catch {
+      return { ok: false, reason: '无法连接到宿主调度服务' }
     }
   }
 
@@ -988,7 +1074,7 @@ export const boardStore = new BoardStore(() => bridge.getBoard())
  */
 export const panelOpen = new PanelOpenControl()
 
-type TabKey = 'pool' | 'tasks' | 'exec' | 'roles' | 'diag'
+type TabKey = 'pool' | 'tasks' | 'exec' | 'roles' | 'groups' | 'diag'
 
 /**
  * TFS 工作台：单浮层容器，内含 需求池 / 任务中心 / 执行配置 / 角色管理 / 连接诊断 五个标签页。
@@ -1051,6 +1137,7 @@ function Workbench(props: {
     tasks: false,
     exec: false,
     roles: false,
+    groups: false,
     diag: false,
   })
   const setTab = useCallback((next: TabKey): void => {
@@ -1387,6 +1474,8 @@ function Workbench(props: {
     // 「AI 解析」按钮因此长期恒定禁用。详见 `shared/contracts.ts` 的移除说明。
     // 问题 1/2：执行配置页的「重新采集目录」。
     refreshCatalog,
+    // 2026-11-03 用户诉求 1：发起执行成功后切到任务中心（面板不知道外层 Tab，由这里注入）。
+    onDispatched: () => setTab('tasks'),
   })
 
   const tabButton = (key: TabKey, label: string): JSX.Element => (
@@ -1521,6 +1610,10 @@ function Workbench(props: {
             <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto' }}>
           <TaskCenter
             snapshot={board}
+            // 2026-11-04：页签是保活的（`panelWrap` 只切 `display`，不卸载），
+            // 定时条目又不写 board ⇒ 必须把"本页是否可见"传进去，否则在「执行配置」
+            // 登记完再切回来，清单永远停在挂载时那一份（表现为"看不见任务、也没有改时间入口"）。
+            active={tab === 'tasks'}
             roles={data.roles}
             collection={data.collection}
             onRefresh={reloadBoard}
@@ -1531,6 +1624,8 @@ function Workbench(props: {
               if (r.ok && r.createdRoles && r.createdRoles.length > 0) reload()
               return r
             }}
+            // 2026-11-03 问题 5：拆解弹框选「立刻/定时」后开始编排（串行链式）。
+            onOrchestrationStart={(key, input) => bridge.orchestrationStart({ requirementKey: key, ...input })}
             // 问题 7/8：还原需求池、删除已取消任务。
             onRestore={key => bridge.restoreRequirement(key)}
             onDeleteTasks={ids => bridge.deleteTasks(ids)}
@@ -1560,6 +1655,12 @@ function Workbench(props: {
             modelOptions={data.modelOptions}
             skillOptions={data.skillOptions}
             mcpServers={data.mcpServers}
+            // 2026-11-03 用户诉求：技能/MCP 分组（任务编辑弹框选分组自动带出）。
+            skillGroups={data.skillGroups}
+            // 2026-11-03 问题 3：定时执行条目（可见 / 改时间 / 取消）。
+            onListSchedules={() => bridge.listSchedules()}
+            onCancelSchedule={id => bridge.cancelSchedule(id)}
+            onUpdateSchedule={(id, dueAt) => bridge.updateSchedule(id, dueAt)}
             // 问题 3：任务编辑弹框的预设下拉数据源。
             presets={data.presets}
             // 标题/需求列直达 TFS 需求页的兜底地址。
@@ -1579,7 +1680,15 @@ function Workbench(props: {
               <OrchestratorChatDock
                 kit={props.chatKit}
                 ctx={props.ctx}
-                onEnsureOrchestrator={key => bridge.orchestratorEnsure(key, true)}
+                onEnsureOrchestrator={async (key, opts) => {
+                  // 2026-11-03 问题 6：先落工作目录（创建编排会话的前置条件），再建会话。
+                  if (opts?.workspace) {
+                    const saved = await bridge.updateRequirement({ requirementKey: key, workspace: opts.workspace })
+                    if (!saved.ok) return { ok: false, reason: `保存工作目录失败：${saved.reason ?? '未知原因'}` }
+                    await reloadBoard()
+                  }
+                  return bridge.orchestratorEnsure(key, true)
+                }}
               />
             )}
           </div>
@@ -1650,6 +1759,35 @@ function Workbench(props: {
 
   const diagPanel = visited.diag ? panelWrap('diag', diagBody()) : null
 
+  /**
+   * 技能/MCP 分组页（2026-11-03 用户诉求）：创建/编辑/删除"技能 + MCP 能力包"。
+   * 保存/删除后 `reload()` 刷新面板数据，执行配置页与任务编辑弹框的分组下拉即时可见新值。
+   */
+  const groupsPanel = visited.groups
+    ? panelWrap(
+        'groups',
+        data ? (
+          <SkillGroupPanel
+            groups={data.skillGroups ?? []}
+            skillOptions={data.skillOptions ?? []}
+            mcpServers={data.mcpServers ?? []}
+            onSave={async group => {
+              const res = await bridge.saveSkillGroup(group)
+              if (res.ok) reload()
+              return res
+            }}
+            onDelete={async id => {
+              const res = await bridge.deleteSkillGroup(id)
+              if (res.ok) reload()
+              return res
+            }}
+          />
+        ) : (
+          <div style={{ padding: 20, color: '#6b7280', fontSize: 13 }}>加载面板数据中…</div>
+        ),
+      )
+    : null
+
   // 面板形态：填满中央列。宿主只为**选中面板**挂载本组件，故无需本地显隐状态。
   // 用 `flex column + 内容区 flex:1`：页签固定、各面板容器自己滚（页签不会滚出视口）。
   return (
@@ -1670,6 +1808,7 @@ function Workbench(props: {
         {tabButton('tasks', board && board.ok ? `任务中心(${board.tasks.length})` : '任务中心')}
         {tabButton('exec', '执行配置')}
         {tabButton('roles', '角色管理')}
+        {tabButton('groups', '技能分组')}
         {tabButton('diag', '连接与凭据')}
         <span style={{ marginLeft: 'auto', fontSize: 12, color: '#9ca3af' }}>
           目标：{target ? `${target.id}@${target.collection}` : '未选择'}
@@ -1708,6 +1847,7 @@ function Workbench(props: {
         {tasksPanel}
         {execPanel}
         {rolesPanel}
+        {groupsPanel}
         {diagPanel}
       </div>
     </section>

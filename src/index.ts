@@ -45,18 +45,32 @@ import { ProfileService } from './host/profile-service.js'
 import { createHostApi, type HostApi, type ReusedTaskLaunchInput } from './host/api.js'
 import { createSubagentClient, probeSubagents } from './host/subagent-access.js'
 import { TaskTraceService } from './host/task-trace.js'
+import { probeSessionActivity } from './host/session-activity.js'
 import { RequirementFinalizer } from './host/requirement-finalizer.js'
 import { createSystemWriteBack } from './tfs/system-writeback.js'
 import { registerTfsRoutes } from './host/route.js'
-import { createParentResolver } from './host/parent-resolver.js'
+import { canPrepareParent, createParentResolver } from './host/parent-resolver.js'
 import { OrchestratorSessionManager } from './host/orchestrator-session.js'
-import { createDshCatalog, type DshCatalogService, type DshCatalogHost } from './host/dsh-catalog.js'
+import { ScheduleService } from './host/scheduler.js'
+import { SkillGroupStore } from './host/skill-group-store.js'
+import { createDshCatalog, loadSkillContents, type DshCatalogService, type DshCatalogHost } from './host/dsh-catalog.js'
 import { pluginToolName, catalogSpecs, catalogView, toolParameterSpec } from './tfs/tool-catalog.js'
 import { installSettingsSection, SETTINGS_NAMESPACE } from './host/settings.js'
+import { readChildToolCallsFrom, readChildToolSurfaceFrom } from './host/task-trace.js'
 import { realFs } from './persistence/fs-like.js'
 
 /** 插件名，同时用作 loader 行 id 与客户端 bundle id。 */
 export const name = 'tfs-requirment'
+
+/**
+ * 宿主半模块的**加载时刻**（进程内只算一次）。
+ *
+ * 用途（2026-10-29 事故教训）：宿主半是普通 node 模块，`dsh` 启动时 `import` 一次即固化；
+ * 重新 `tsc` 出 `lib/` 之后如果不重启 dsh，运行期仍是旧代码——而报错文案看上去"很正常"
+ * （本次现场：构建产物已更新，用户仍收到上一版的 *缺少 start(name, request) 方法*）。
+ * 面板把这个时间显示出来，"要不要重启"就不再靠猜。
+ */
+export const PLUGIN_LOADED_AT = new Date().toISOString()
 
 /**
  * 依赖的宿主服务（扁平字符串数组，cordis 按元素取服务名）。
@@ -246,6 +260,8 @@ export function apply(ctx: Context, config: TfsRequirmentConfig): void {
     log(ctx, 'info', `tfs-requirment: 已从旧数据目录迁移 ${migrated.length} 个文件到 ${dataDir}：${migrated.join(', ')}`)
   }
   const roleStore = new RoleStore(dataDir, realFs)
+  // 2026-11-03 用户诉求：技能/MCP 分组（skill-groups.json，同 JsonStore 纪律）。
+  const skillGroupStore = new SkillGroupStore({ baseDir: dataDir, fs: realFs })
   const audit = new AuditLog(dataDir, realFs)
   const guard = new WriteGuard(audit)
 
@@ -400,6 +416,16 @@ export function apply(ctx: Context, config: TfsRequirmentConfig): void {
     {
       // 问题 1：单次 run 总时长看门狗（0 = 不启用），防止子 agent 死循环 / 失控空转永久占用。
       ...(config.runTimeoutMinutes > 0 ? { runTimeoutMs: config.runTimeoutMinutes * 60_000 } : {}),
+      // 2026-11-04：到点先看"是否还在写会话事件"，才有资格说这是空转。
+      // 只有总时长没有活性判据时，正常长任务（PM 分析一步就 28m51s）会被当成死循环掐死。
+      ...(config.runTimeoutGraceMinutes > 0 ? { runTimeoutGraceMs: config.runTimeoutGraceMinutes * 60_000 } : {}),
+      // 探针每次**调用时**解析 sessionQuery（apply 期必然拿不到，见 cordis 纪律）；
+      // 探不到返回 undefined ⇒ 看门狗退回按总时长终止（fail-open，不因探针故障提前杀）。
+      probeActivity: (runId: string) =>
+        probeSessionActivity(
+          (ctx.get as (n: string, strict?: boolean) => unknown)('sessionQuery', false),
+          runId,
+        ),
       // 问题 1：委派深度默认上限（0 = 不限制），硬限制在分发器层强制，prompt 纪律段与之保持一致。
       ...(config.defaultMaxDepth > 0 ? { defaultMaxDepth: config.defaultMaxDepth } : {}),
       // 问题 1：单次输出 token 默认上限（0 = 不限制）；任务级 maxTokens 优先于此默认。
@@ -515,6 +541,9 @@ export function apply(ctx: Context, config: TfsRequirmentConfig): void {
    * US4 派发的硬前提：必须是**真实宿主 Agent**（理由见 `createParentResolver` 的注释）。
    * spec 010 起编排会话也用**同一个**解析器：两处各建一个会让"最近活跃 Agent"的记忆分叉，
    * 出现"任务派给了会话 A、编排会话派生自会话 B"的错位。
+   *
+   * 2026-11-03：解析器同时提供 `ensure()`（同步链失败时恢复/新建会话），装配进 api 与编排，
+   * 使派发不再要求"用户此刻正开着会话"（定时执行到点、从工作台直接发起都靠它）。
    */
   const getParent = createParentResolver(ctx)
 
@@ -525,12 +554,33 @@ export function apply(ctx: Context, config: TfsRequirmentConfig): void {
   const getSessionQuery = (): unknown =>
     (ctx.get as (n: string, strict?: boolean) => unknown)('sessionQuery', false)
 
+  /**
+   * 2026-10-29（诉求 3/4）：所选 MCP server → 真实工具全名的映射源。
+   *
+   * `ctx.tools.schemas()` 是宿主**当前注册**的工具表（含 `mcp__<server>__<tool>`），
+   * 用它而不是配置回显，才能区分"配置里写了但没起来"的实例 —— 那种实例必须让派发**失败**，
+   * 而不是静默忽略用户的选择。
+   */
+  const listToolNames = (): string[] => {
+    const tools = (ctx.get as (n: string, strict?: boolean) => unknown)('tools', false) as
+      | { schemas?: (scope?: unknown) => Array<{ name?: unknown }> }
+      | undefined
+    if (!tools || typeof tools.schemas !== 'function') return []
+    try {
+      return tools.schemas().map(s => (typeof s?.name === 'string' ? s.name : '')).filter(n => n.length > 0)
+    } catch {
+      return []
+    }
+  }
+
   // spec 010：需求级「编排主 agent」会话（归纳 / 最终总结）。看板降级时不构造（能力整体不可用）。
   const orchestrator: OrchestratorSessionManager | undefined = boardService
     ? new OrchestratorSessionManager({
         ctx,
         board: boardService,
         getParent,
+        // 归纳/总结/决策都可能晚于用户会话（定时链、扫尾续跑、重启补跑）：同样可以现场准备。
+        ensureParent: (workspace?: string) => getParent.ensure(workspace),
         getSessionQuery,
         provider: config.orchestratorProvider,
         enabled: config.orchestratorEnabled,
@@ -545,11 +595,40 @@ export function apply(ctx: Context, config: TfsRequirmentConfig): void {
       })
     : undefined
 
+  // 2026-11-03 问题 4/5：定时执行调度器（`schedules.json` 落盘 + 心跳兜底 + 重启补跑）。
+  // execute 闭包**延迟**引用 api（装配完成前不可能触发：条目要经 api 才能登记）。
+  let apiRef: HostApi | undefined
+  const scheduler = new ScheduleService({
+    baseDir: dataDir,
+    fs: realFs,
+    execute: async entry => {
+      if (!apiRef) return { ok: false, reason: '插件装配未完成（稍后重试请重新登记定时）' }
+      try {
+        if (entry.kind === 'chain') {
+          const p = (entry.payload ?? {}) as { requirementKey?: string; sequential?: boolean }
+          const r = await apiRef.orchestrationStart({
+            requirementKey: String(p.requirementKey ?? ''),
+            mode: 'now',
+            ...(p.sequential === true ? { sequential: true } : {}),
+          })
+          return r.ok ? { ok: true } : { ok: false, reason: r.reason }
+        }
+        const input = entry.payload as Parameters<HostApi['dispatch']>[0]
+        const r = await apiRef.dispatch(input)
+        return r.ok ? { ok: true } : { ok: false, reason: r.reason }
+      } catch (e) {
+        return { ok: false, reason: e instanceof Error ? e.message : String(e) }
+      }
+    },
+  })
+
   // 编排核心：聚合面板数据 / 确认回写 / 派发 / 看板 / 自检 / 审计归档 / 集合切换 / 连接档案。
   const api: HostApi = createHostApi({
     roles: roleStore,
+    skillGroups: skillGroupStore,
     adapter,
     dispatcher,
+    scheduler,
     ...(boardService ? { board: boardService } : {}),
     ...(taskTrace ? { trace: taskTrace } : {}),
     health: { port: adapter, availableTools: listImplementedOperations },
@@ -559,6 +638,11 @@ export function apply(ctx: Context, config: TfsRequirmentConfig): void {
     // （旧实现 `ctx as unknown as Agent` 会在宿主 subagent 驱动里抛 TypeError，
     //   造成"看板 running、子 agent 从未创建、零 token"的假执行）。
     getParent,
+    // 2026-11-03：同步链拿不到会话时现场准备（恢复上次会话 / 新建）。
+    // 定时执行到点那一刻用户会话通常已不在，没有这条就等于"定时任务必然丢"。
+    ensureParent: (workspace?: string) => getParent.ensure(workspace),
+    // 面板探测用：能准备会话就不该因为"当前没开会话"判死（见 gateProbeByParent）。
+    canPrepareParent: () => canPrepareParent(ctx),
     // spec 010：编排主 agent（归纳 / 最终总结）与任务会话复用。
     ...(orchestrator
       ? {
@@ -596,11 +680,27 @@ export function apply(ctx: Context, config: TfsRequirmentConfig): void {
     ...(finalizer ? { finalizer } : {}),
     // DSH 真实能力目录（问题 4/5/6/7/9/11）。
     catalog,
+    // 2026-10-29（诉求 3/4）：所选技能/MCP 必须真的作用于子 agent。
+    //   ① 技能正文：按名字从宿主 skills 服务读取（含 preset 作用域探测，见 loadSkillContents）；
+    //   ② MCP 真实工具名：来自 tools.schemas()，用于把 server 名展开成工具全名；
+    //   ③ 落定验收：读子会话 tool/call 事件，核对技能/MCP/工作流是否真被使用。
+    // 三项全部惰性取服务（非严格 ctx.get）：服务缺失时降级为"不强制/不验收"，不拖垮插件加载。
+    loadSkillBodies: names => loadSkillContents(catalogHost, names),
+    listToolNames,
+    readChildToolCalls: sessionId => readChildToolCallsFrom(getSessionQuery(), sessionId),
+    // 2026-10-30：真实工具表（戳穿"工具未注入"谎报）。
+    readChildToolNames: sessionId => readChildToolSurfaceFrom(getSessionQuery(), sessionId),
+    skillToolName: 'skill',
+    // 宿主半加载时刻（面板显示，用于判断"构建后有没有重启"）。
+    pluginLoadedAt: PLUGIN_LOADED_AT,
     // 能力目录现算：全表 + 标注适配层未实现的缺口（不再是"按实例收敛"）。
     tfsToolCatalog: () => catalogView(IMPLEMENTED_OPERATIONS),
     // 真实副作用：切换集合立即改变适配层的默认集合（不是只改 UI 状态）。
     onCollectionChange: next => adapter.setCollection(next),
   })
+  // 装配完成：调度器的 execute 才能引用 api；随后装载落盘条目（过期补跑、未到期武装）。
+  apiRef = api
+  scheduler.start()
 
   // 路由注册失败则按钮点了没反应，这是最需要被看见的降级，单独打日志。
   // 用 ctx.inject(['webServer'], ...) 惰性注册：无 web 服务（headless/TUI）时插件照常加载。
@@ -633,7 +733,7 @@ export function apply(ctx: Context, config: TfsRequirmentConfig): void {
        * 并重启之前完全看不出改动尚未生效——于是"改了没用"。现在显式点名这些键。
        */
       const applyTimeKeys: Array<keyof typeof next> = [
-        'maxConcurrentRequirements', 'runTimeoutMinutes', 'staleRunningReapMinutes',
+        'maxConcurrentRequirements', 'runTimeoutMinutes', 'runTimeoutGraceMinutes', 'staleRunningReapMinutes',
         'staleRunningSweepSeconds', 'orchestratorEnabled', 'orchestratorProvider',
         'reuseTaskSessions', 'summarizeTimeoutSeconds', 'summarizeGraceSeconds',
         'finalizeTimeoutSeconds', 'finalizeGraceSeconds', 'taskSessionSettleTimeoutMinutes',

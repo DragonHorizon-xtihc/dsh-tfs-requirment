@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MultiSelect } from './MultiSelect.js'
 import { buildTargetFill, shouldFillTarget } from '../../shared/pool.js'
+import { formatLocalMinute, validateSchedule } from '../../shared/schedule.js'
 import { isValidTargetWorkItem, targetRefFromKey } from '../../shared/target.js'
 import {
   decodeModelValue,
@@ -71,6 +72,7 @@ const DEFAULT_STATE: ExecutionFormState = {
   title: '',
   description: '',
   execPrompt: '',
+  reqPrompt: '',
   tags: [],
   workspace: '',
   permission: 'workspace-write',
@@ -78,7 +80,10 @@ const DEFAULT_STATE: ExecutionFormState = {
   preset: '',
   selectedMcp: [],
   selectedSkills: [],
+  workflow: '',
   roleName: '',
+  scheduleMode: 'now',
+  scheduleAtLocal: '',
 }
 
 const sectionStyle: React.CSSProperties = {
@@ -140,7 +145,17 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
     lastFilledNonceRef.current = fillNonce
     const fill = buildTargetFill(data.target)
     if (!fill) return
-    setForm(prev => ({ ...prev, title: fill.title, description: fill.description, execPrompt: fill.execPrompt }))
+    // 2026-11-03 问题 3/1：工作目录与需求级提示词一并带出。
+    // 无论工作目录是下拉选的还是手填的都带（手填路径下拉显示「（手填）」项，见下方 select），
+    // 需求级提示词进独立字段 —— 宿主派发时自动拼在任务提示词前，绝不复制进 execPrompt。
+    setForm(prev => ({
+      ...prev,
+      title: fill.title,
+      description: fill.description,
+      execPrompt: fill.execPrompt,
+      ...(fill.workspace ? { workspace: fill.workspace } : {}),
+      reqPrompt: fill.reqPrompt,
+    }))
   }, [fillNonce, data.target])
 
   // ── 真实枚举（问题 4/5/6/7）：全部取自宿主下发目录，本组件不内置任何兜底清单 ──
@@ -230,6 +245,9 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
     if (form.execPrompt.trim()) rows.push({ field: 'execPrompt', kind: 'changed', after: form.execPrompt.slice(0, 80) + (form.execPrompt.length > 80 ? '…' : '') })
     if (form.selectedMcp.length) rows.push({ field: 'frozenConfig.mcp', kind: 'changed', after: form.selectedMcp })
     if (form.selectedSkills.length) rows.push({ field: 'frozenConfig.skills', kind: 'changed', after: form.selectedSkills })
+    if (form.selectedSkills.includes(form.workflow) && form.workflow) {
+      rows.push({ field: 'frozenConfig.workflow', kind: 'changed', after: form.workflow })
+    }
     if (form.roleName) rows.push({ field: 'roleAgent', kind: 'changed', after: form.roleName })
     rows.push({ field: 'model', kind: 'changed', after: effectiveRouteText })
     if (effectivePreset) rows.push({ field: 'preset', kind: 'changed', after: effectivePreset })
@@ -253,32 +271,38 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
       ]
       const res = await actions.confirmWrite(ops, targetRef)
       setMessage(res.ok ? { kind: 'ok', text: '回写已执行（过四道门禁）' } : { kind: 'err', text: res.reason ?? '回写被拒' })
+    } catch (e) {
+      // 与「发起执行」同一纪律：任何抛出都要在界面上留下可读反馈，不能静默。
+      setMessage({ kind: 'err', text: `回写失败：${e instanceof Error ? e.message : String(e)}` })
     } finally {
       setBusy(false)
     }
   }
 
   /**
-   * 问题 6：发起执行成功后清空**执行内容**。
+   * 2026-11-03 用户诉求 1：发起执行成功后**整页重置**执行配置。
    *
-   * 只清"这次要做什么"（标题/描述/执行 Prompt/标签/交接包），
-   * **保留执行环境**（角色/模型/预设/工作目录/MCP/技能/权限）—— 环境是用户为手头这摊活
-   * 反复使用的一组选择，一起清掉等于每次都要重配，反而逼用户出错。
-   *
-   * 不清空的话，用户接着对另一条需求点「发起执行」时会把上一条需求的正文一起发出去，
-   * 而任务中心会多出一条内容错乱的任务（问题 6 把执行落地成任务之后，这个后果更明显了）。
+   * 曾有 `resetContent`（只清标题/描述/执行 Prompt/标签、保留执行环境，问题 6）——
+   * 用户明示要"重置执行配置页面"，且派发已把整套配置冻结进看板任务/定时条目，
+   * 留着环境只会让下一次派发带上"上一单的环境"。故整表打回 DEFAULT_STATE
+   * （含角色/模型/工作目录/技能/MCP/定时等）并清空执行预算。
    */
-  const resetContent = (): void => {
-    setForm(prev => ({
-      ...prev,
-      title: '',
-      description: '',
-      execPrompt: '',
-      tags: [],
-            }))
+  const resetAll = (): void => {
+    setForm(DEFAULT_STATE)
+    setMaxDepthInput('')
+    setMaxTokensInput('')
   }
 
   const onDispatch = async (): Promise<void> => {
+    // 问题 4：定时执行 —— 先校验时机（定时必须给未来时刻，精确到分）。
+    const scheduleCheck = validateSchedule({
+      mode: form.scheduleMode,
+      dueAtLocal: form.scheduleAtLocal,
+    })
+    if (!scheduleCheck.ok) {
+      setMessage({ kind: 'err', text: scheduleCheck.reason })
+      return
+    }
     setBusy(true)
     setMessage(null)
     try {
@@ -290,6 +314,10 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
           title: form.title.trim() || undefined,
           description: form.description.trim() || undefined,
           prompt: form.execPrompt || form.title,
+          // 问题 1/3：需求级提示词本次覆盖（「选为目标」带入后可微调；留空 = 沿用需求上存的）。
+          ...(form.reqPrompt.trim() ? { requirementPrompt: form.reqPrompt.trim() } : {}),
+          // 问题 4：执行时机（'now' = 立刻；'at' = 到点再派发，此刻不建看板任务）。
+          schedule: scheduleCheck.plan,
           // 冻结配置用**生效值**：留空时用 dsh 真实清单的第一项，避免把空字符串冻进快照
           // （冻结快照是运行期不可改的，冻个空模型等于这次执行必然拿不到模型）。
           // spec 009：model 与 modelProvider 成对下发——只发裸 id 时子 agent 会继承父聊天
@@ -299,6 +327,8 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
             skills: form.selectedSkills,
             model: effectiveRoute?.id ?? '',
             ...(effectiveRoute?.provider ? { modelProvider: effectiveRoute.provider } : {}),
+            // 诉求 4：工作流随冻结配置落库，后续「启动 / 重试 / 发起执行」都按它逐步强制。
+            ...(form.selectedSkills.includes(form.workflow) ? { workflow: form.workflow } : {}),
           },
           permission: form.permission,
           ...(effectivePreset ? { preset: effectivePreset } : {}),
@@ -315,12 +345,34 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
         setMessage({ kind: 'err', text: res.reason ?? '分发失败' })
         return
       }
+      if (res.scheduled) {
+        const scheduledExtras = [
+          res.workspace ? `工作目录：${res.workspace}` : '未指定工作目录（使用任务/需求上配置的目录）',
+          '定时条目已落盘：插件重启后到点仍会执行',
+        ].filter(Boolean)
+        setMessage({
+          kind: 'ok',
+          text: `已登记定时执行：到 ${formatLocalMinute(res.scheduledAt)}（本地时间，精确到分）后主 agent 自动开始派发`
+            + `\n${scheduledExtras.join('\n')}`,
+        })
+        // 2026-11-03 用户诉求 1 → 第三批问题 3：整页重置防重复登记**并切到任务中心** ——
+        // 定时条目在任务中心「定时执行」区可见（到点时间/改时间/取消），留在本页看不到它。
+        resetAll()
+        actions.onDispatched?.()
+        return
+      }
       const extras = [
         res.createdTask && res.taskId ? `已创建看板任务 ${res.taskId}（到「任务中心」可查看执行过程）` : '',
         res.workspace ? `工作目录：${res.workspace}` : '未指定工作目录（使用任务/需求上配置的目录）',
       ].filter(Boolean)
       setMessage({ kind: 'ok', text: `已发起执行（并发分发中）${extras.length ? `\n${extras.join('\n')}` : ''}` })
-      resetContent()
+      // 2026-11-03 用户诉求 1：成功后整页重置 + 切到任务中心（看板任务已创建，那里能看执行过程）。
+      resetAll()
+      actions.onDispatched?.()
+    } catch (e) {
+      // 2026-10-29：旧实现只有 try/finally —— 任何抛出（桥接异常 / 宿主 500）都会变成
+      // unhandled rejection，界面上**一点反馈都没有**，用户只能看到"点了没反应"。
+      setMessage({ kind: 'err', text: `发起执行失败：${e instanceof Error ? e.message : String(e)}` })
     } finally {
       setBusy(false)
     }
@@ -331,6 +383,15 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
       <h3 style={{ margin: '0 0 4px' }}>执行任务配置</h3>
       <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
         目标：<code>{data.targetWorkItem}</code> · 集合 <code>{data.collection}</code>
+        {data.pluginLoadedAt && (
+          <>
+            {' · '}
+            宿主插件加载于{' '}
+            <span title="宿主半代码只在 dsh 启动时加载一次：若这个时间早于你最后一次重新构建，说明当前跑的是旧代码，需要重启 dsh">
+              {new Date(data.pluginLoadedAt).toLocaleString()}
+            </span>
+          </>
+        )}
       </div>
 
       {/* 基本信息（参照新建任务弹窗） */}
@@ -341,6 +402,16 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
         <textarea style={{ ...inputStyle, minHeight: 56 }} value={form.description} onChange={e => set('description', e.target.value)} />
         <label style={labelStyle}>执行 Prompt（作为子 agent 首条消息）</label>
         <textarea style={{ ...inputStyle, minHeight: 72 }} value={form.execPrompt} onChange={e => set('execPrompt', e.target.value)} placeholder="描述该角色智能体要完成的工作" />
+        {/* 问题 1/3：需求级提示词 —— 「选为目标」从任务中心带入（领取入池/编辑里填的那份）。
+            派发时宿主自动拼在任务提示词**之前**，故这里不拼进执行 Prompt（拼了会发两份）。
+            本字段可微调，仅影响**本次**派发（DispatchDraft.requirementPrompt 覆盖），不回写需求。 */}
+        <label style={labelStyle}>需求级提示词（派发时自动拼在任务提示词前；带入自任务中心，可微调）</label>
+        <textarea
+          style={{ ...inputStyle, minHeight: 56 }}
+          value={form.reqPrompt}
+          onChange={e => set('reqPrompt', e.target.value)}
+          placeholder="留空 = 沿用需求上保存的提示词"
+        />
       </div>
 
       {/* 标签（datalist + 添加，参照弹窗 #dsh-task-board-tag-names） */}
@@ -405,6 +476,38 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
             {catalogIssue.join('\n')}
           </div>
         )}
+        {/* 2026-11-03 用户诉求：技能/MCP 分组 —— 选中即带出组内技能与 MCP（带出后可微调，
+            分组只是填充器不是绑定）。分组在「技能分组」页维护。 */}
+        {(data.skillGroups?.length ?? 0) > 0 && (
+          <>
+            <label style={labelStyle}>技能/MCP 分组（选中自动带出组内技能与 MCP，可继续微调）</label>
+            <select
+              style={inputStyle}
+              value=""
+              onChange={e => {
+                const gid = e.target.value
+                if (!gid) return
+                const g = (data.skillGroups ?? []).find(x => x.id === gid)
+                if (!g) return
+                setForm(prev => ({
+                  ...prev,
+                  selectedSkills: [...new Set(g.skills)],
+                  selectedMcp: [...new Set(g.mcp)],
+                  // 工作流必须留在技能清单内：带出后若原工作流不在新技能里则清空。
+                  workflow: g.skills.includes(prev.workflow) ? prev.workflow : '',
+                }))
+                setMessage({ kind: 'ok', text: `已带出分组「${g.name}」：技能 ${g.skills.length} 项、MCP ${g.mcp.length} 项（可继续微调）` })
+              }}
+            >
+              <option value="">— 选择分组带出技能/MCP —</option>
+              {(data.skillGroups ?? []).map(g => (
+                <option key={g.id} value={g.id}>
+                  {g.name}（技能 {g.skills.length} · MCP {g.mcp.length}）
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         {/* 问题 7：MCP 清单 = 宿主实际注册的 MCP server（由工具名前缀 `mcp__<server>__` 反推，
             非配置回显，因此"配置里写了但没起来"的实例不会出现在这里）。支持关键字刷选。 */}
         <label style={labelStyle}>MCP 选择（FrozenConfig.mcp，来自宿主真实注册实例）</label>
@@ -417,7 +520,9 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
         />
         <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
           TFS 能力由本插件直连 REST 提供（工具名 <code>tfs_req_*</code>），**不需要**在这里勾任何
-          MCP —— 本插件不依赖任何 MCP 实例，此处的 MCP 选择只用于角色智能体的其它用途。
+          MCP。此处勾选的 MCP 会被**强制使用**：派发时把该 server 的真实工具全名写进子代理 prompt，
+          落定后核对它是否真被调用；勾了但当前没起来的 server 会在 prompt 里被标注为不可用
+          （不会静默当成已使用）。
         </div>
 
         {/* 问题 7 / 11：技能清单 = 宿主 skills.list() 的真实技能（含来源桶与可调用性），支持刷选。 */}
@@ -429,13 +534,57 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
             hint: `${s.source}${s.modelInvocable ? ' · 模型可调用' : ''}`,
           }))}
           value={form.selectedSkills}
-          onChange={next => set('selectedSkills', next)}
+          onChange={next => setForm(prev => ({
+            ...prev,
+            selectedSkills: next,
+            // 诉求 4：工作流必须留在技能清单内 —— 取消勾选该技能时同步清空工作流，
+            // 避免留下"指向不存在技能"的悬空配置（宿主侧也会拒，但 UI 不该制造它）。
+            workflow: next.includes(prev.workflow) ? prev.workflow : '',
+          }))}
           placeholder="未选择技能"
           searchPlaceholder="按技能名刷选…"
         />
 
-        <label style={labelStyle}>角色智能体（决定 provider 与默认配置）</label>
-        <select style={inputStyle} value={form.roleName} onChange={e => set('roleName', e.target.value)}>
+        {/* 2026-10-29（诉求 4，第二轮修正）：工作流**从全部已安装技能中选择**。
+            上一版只列"已勾选的技能"，用户必须先想到勾选它才能选工作流 —— 顺序反了。
+            现在：下拉列全部技能；选中工作流时**自动把它加入技能清单**（宿主要求
+            workflow ∈ skills，这样才能取到正文、才能整篇下发并逐步验收）。 */}
+        <label style={{ ...labelStyle, marginTop: 8 }}>
+          工作流（从全部已安装技能中选择，共 {skillOptions.length} 项；选中即强制按该技能的流程逐步执行）
+        </label>
+        <select
+          style={inputStyle}
+          value={form.workflow}
+          onChange={e => {
+            const next = e.target.value
+            setForm(prev => ({
+              ...prev,
+              workflow: next,
+              // 选中工作流 ⇒ 自动并入技能清单（不重复添加）。
+              selectedSkills: next && !prev.selectedSkills.includes(next)
+                ? [...prev.selectedSkills, next]
+                : prev.selectedSkills,
+            }))
+          }}
+          disabled={skillOptions.length === 0}
+        >
+          <option value="">— 不启用工作流（自由执行）—</option>
+          {skillOptions.map(s => (
+            <option key={s.name} value={s.name}>
+              {s.name}
+              {form.selectedSkills.includes(s.name) ? '（已在技能中）' : ''}
+            </option>
+          ))}
+        </select>
+        <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+          {skillOptions.length === 0
+            ? '宿主未返回技能清单（能力降级）：请点上方「重新采集目录」。'
+            : '工作流 = 技能：选中后会自动加入「技能」，插件把该技能正文整篇下发，并从正文解析步骤'
+              + '（Phase / Step / 阶段 / 步骤 / 编号标题）。子代理必须逐步输出「✅ 步骤 i/N」，'
+              + '跳过任何一步都会被判为不达标。'}
+        </div>
+
+        <label style={labelStyle}>角色智能体（决定 provider 与默认配置）</label>        <select style={inputStyle} value={form.roleName} onChange={e => set('roleName', e.target.value)}>
           <option value="">— 请选择 —</option>
           {data.roles.map(r => (
             <option key={r.id} value={r.name}>
@@ -449,7 +598,7 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
       <div style={sectionStyle}>
         <label style={labelStyle}>冻结快照（创建时锁定 MCP/技能/模型，运行期不可改）</label>
         <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 6, padding: 8, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-          {`<<<FREEZE\nmcp: ${form.selectedMcp.join(', ') || '—'}\nskills: ${form.selectedSkills.join(', ') || '—'}\nmodel: ${effectiveRouteText}\npreset: ${effectivePreset || '—'}\nworkspace: ${effectiveWorkspace || '(跟随任务/需求)'}\nrole: ${form.roleName || '—'}\nFREEZE>>>`}
+          {`<<<FREEZE\nmcp: ${form.selectedMcp.join(', ') || '—'}\nskills: ${form.selectedSkills.join(', ') || '—'}\nworkflow: ${form.selectedSkills.includes(form.workflow) && form.workflow ? `${form.workflow}（强制逐步执行）` : '—'}\nmodel: ${effectiveRouteText}\npreset: ${effectivePreset || '—'}\nworkspace: ${effectiveWorkspace || '(跟随任务/需求)'}\nrole: ${form.roleName || '—'}\nFREEZE>>>`}
         </div>
         {/* 问题 1：执行预算——抑制子代理失控空转 / 无限委派，降低 token 消耗。 */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
@@ -490,7 +639,11 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
                 （旧实现正是取 `w.id`，与需求池领取弹框、任务编辑弹框用的 `w.path` 语义不一致）。
                 留空 = 跟随任务/需求上已配置的目录（由宿主按 任务级 → 需求级 回落）。 */}
             <label style={labelStyle}>工作目录（覆盖任务/需求上的配置，留空即跟随）</label>
-            <select style={inputStyle} value={form.workspace} onChange={e => set('workspace', e.target.value)}>
+            <select
+              style={inputStyle}
+              value={workspaces.some(w => w.path === form.workspace) ? form.workspace : (form.workspace ? '__manual__' : '')}
+              onChange={e => set('workspace', e.target.value === '__manual__' ? form.workspace : e.target.value)}
+            >
               <option value="">— 跟随任务/需求配置 —</option>
               {workspaces.map(w => (
                 <option key={w.id} value={w.path}>
@@ -498,10 +651,21 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
                   {w.path && w.path !== w.title ? `（${w.path}）` : ''}
                 </option>
               ))}
+              {form.workspace && !workspaces.some(w => w.path === form.workspace) && (
+                <option value="__manual__">{form.workspace}（手填）</option>
+              )}
             </select>
+            {/* 问题 3：手填绝对路径（与需求编辑/领取弹框同纪律）——「选为目标」带出的
+                手填目录会出现在上方下拉的「（手填）」项里；这里可直接改。 */}
+            <input
+              style={{ ...inputStyle, marginTop: 4 }}
+              placeholder="或手填绝对路径，如 D:\\code\\his"
+              value={form.workspace}
+              onChange={e => set('workspace', e.target.value)}
+            />
             {workspaces.length === 0 && (
               <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
-                宿主未返回工作区清单（能力降级）：可留空跟随任务/需求，或把目录配在任务编辑弹框里。
+                宿主未返回工作区清单（能力降级）：可留空跟随任务/需求，或手填绝对路径。
               </div>
             )}
           </div>
@@ -569,6 +733,43 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
         ))}
       </div>
 
+      {/* 问题 4：执行时机 —— 立刻（默认）/ 定时（精确到分）。
+          定时条目落盘（schedules.json）：到点后主 agent 自动开始派发，插件重启也补跑。 */}
+      <div style={sectionStyle}>
+        <label style={labelStyle}>执行时机</label>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 13, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              checked={form.scheduleMode === 'now'}
+              onChange={() => set('scheduleMode', 'now')}
+              style={{ marginRight: 4 }}
+            />
+            立刻（默认）
+          </label>
+          <label style={{ fontSize: 13, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              checked={form.scheduleMode === 'at'}
+              onChange={() => set('scheduleMode', 'at')}
+              style={{ marginRight: 4 }}
+            />
+            定时
+          </label>
+          {form.scheduleMode === 'at' && (
+            <input
+              type="datetime-local"
+              style={{ ...inputStyle, width: 'auto' }}
+              value={form.scheduleAtLocal}
+              onChange={e => set('scheduleAtLocal', e.target.value)}
+            />
+          )}
+          {form.scheduleMode === 'at' && (
+            <span style={{ fontSize: 11, color: '#6b7280' }}>到点后主 agent 自动开始派发（精确到分）</span>
+          )}
+        </div>
+      </div>
+
       {/* 动作。
           两个按钮的禁用条件都是**点击前可见的事实**（2026-09-21 修复）：
             - 没选目标 ⇒ 回写必然被拒（TFS 要工作项 id）；发起执行也无需求上下文可绑定；
@@ -584,19 +785,33 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
         </button>
         <button
           style={dangerButtonStyle}
-          disabled={busy || !form.roleName || !targetReady || orchestrationBlocked}
+          /* 2026-10-29（诉求 3：点击毫无反应）：**不再因为编排能力被探针判不可用就禁用按钮**。
+             禁用按钮 + 一段红色说明，在用户眼里就是"点了没有任何反应"——既没有请求、也没有反馈。
+             现在按钮始终可点：编排不可用时点击立即把原因写进下方消息区（可复制、可截图），
+             编排可用时照常发起真实派发（失败也会显示宿主回传的原因）。 */
+          disabled={busy || !form.roleName || !targetReady}
           title={
             !form.roleName
               ? '请先选择角色智能体'
               : !targetReady
                 ? '请先在「需求池」或「任务中心」点某个需求「选为目标」'
                 : orchestrationBlocked
-                  ? `宿主编排能力不可用：${orchestration?.reason ?? '未知原因'}`
+                  ? `编排能力当前不可用（点击查看原因）：${orchestration?.reason ?? '未知原因'}`
                   : ''
           }
-          onClick={onDispatch}
+          onClick={() => {
+            if (orchestrationBlocked) {
+              setMessage({
+                kind: 'err',
+                text: `未发起执行：${orchestration?.reason ?? '宿主编排能力不可用'}\n`
+                  + '（若刚重新构建/替换过插件，请重启 dsh 后再试：宿主半代码只在启动时加载。）',
+              })
+              return
+            }
+            void onDispatch()
+          }}
         >
-          发起执行
+          {form.scheduleMode === 'at' ? '定时执行' : '发起执行'}
         </button>
       </div>
       {!targetReady && (
@@ -619,13 +834,22 @@ export function ExecutionPanel(props: { data: ExecutionPanelData; actions: Execu
         >
           宿主编排能力不可用（US4）：{orchestration?.reason ?? '未给出原因'}
           <br />
-          面板无法派发子智能体。请在 profile 中确认已装载 <code>@deepseek-ai/dsh-subagent</code>，
-          然后重启 dsh（此提示每次打开本页都会重新探测，不需要重启界面）。
+          排查：① 提示“未提供或尚未激活” ⇒ 在 profile 中确认已装载 <code>@deepseek-ai/dsh-subagent</code> 并重启 dsh；
+          ② 提示“既没有 startActivation 也没有 start” ⇒ 宿主 <code>@deepseek-ai/dsh-subagent</code> 版本与本插件不匹配，
+          请升级到 0.2.1 及以上（该版本用 <code>startActivation</code> 取代了 <code>start</code>）。
+          <br />
+          （此提示每次打开本页都会重新探测，不需要重启界面。）
         </div>
       )}
-      {orchestration?.available && orchestration.providers.length > 0 && (
+      {orchestration?.available && (
         <div style={{ marginTop: 8, fontSize: 11, color: '#6b7280' }}>
-          可用 subagent provider：{orchestration.providers.join('、')}（角色的 provider 须取其中之一）
+          派发通道：<code>{orchestration.api ?? '自动'}</code>
+          {orchestration.providers.length > 0
+            ? ` ｜ 可用 subagent provider：${orchestration.providers.join('、')}（角色的 provider 须取其中之一）`
+            : ' ｜ 宿主未上报 provider 清单'}
+          {orchestration.parentOnDemand
+            ? ' ｜ 当前没有活跃会话：发起时将由宿主自动恢复/新建一个会话承载子智能体（不需要先开聊天窗口）'
+            : ''}
         </div>
       )}
       {message && (

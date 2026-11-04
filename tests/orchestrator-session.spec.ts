@@ -330,6 +330,59 @@ describe('launchReusedTask（AC3.3/AC3.4）', () => {
     })
     const outcome = await r.result
     expect(outcome.stopReason).toBe('error')
-    expect(String((outcome as { diagnostic?: string }).diagnostic)).toContain('未观测到收口')
+    expect(String((outcome as { diagnostic?: string }).diagnostic)).toContain('停滞超时')
+  })
+
+  it('复用会话 turn/end 事件 ⇒ 立即落定（不再等超时；2026-10-31 根因修复）', async () => {
+    /**
+     * 2030877 现场：turn 2 干了 88 分钟真活、`turn/end {turn:2, reason:completed}` 已写入
+     * 会话日志，但旧实现在 `source==='live'` 时永远 return（复用会话长期 live），
+     * 只能等 30 分钟超时误判失败。现在以 turn/end 为收口信号。
+     */
+    const fake = fakeSubagents()
+    /** 可控的 sessionQuery 桩：turn/end 事件在 settleFromSessionLog 第二次轮询后出现。 */
+    let pollCount = 0
+    const sessionQuery = {
+      observeSession: async () => {
+        pollCount += 1
+        const events = pollCount >= 2
+          ? [
+              { type: 'turn/start', data: { turn: 1 } },
+              { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '第一轮完成' }] } } },
+              { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+              { type: 'turn/start', data: { turn: 2 } },
+              { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '✅ 步骤 1/2：完成\n✅ 步骤 2/2：完成\nTASK_DONE' }] } } },
+              { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } },
+            ]
+          : [{ type: 'turn/start', data: { turn: 2 } }]
+        return { source: 'live', events, dispose: () => {} }
+      },
+    }
+    const { ctx } = makeCtx({ subagents: fake.service, sessionQuery })
+    const board = makeBoard()
+    // 停滞超时给大（5 秒）：若 turn/end 检测失效会走超时路径（5s 后才失败），
+    // 而正确行为应在第 2 次轮询（约 2s）就落定为 completed。
+    const mgr = manager(ctx, board, {
+      taskSettleTimeoutMs: 5000,
+      pollIntervalMs: 100,
+      getSessionQuery: () => sessionQuery,
+    })
+    await mgr.ensure(KEY)
+    const start = Date.now()
+    const r = await mgr.launchReusedTask({
+      requirementId: KEY,
+      taskId: TASK,
+      parent: { session: { id: 'parent-1' } } as unknown as Agent,
+      prompt: [{ type: 'text', text: '干活' }] as never,
+      role: { provider: 'spawn' },
+      frozenConfig: {},
+    })
+    const outcome = await r.result
+    const elapsed = Date.now() - start
+    // 落定为 completed（不是超时 error），且在停滞超时（5s）之前。
+    expect(outcome.stopReason).toBe('completed')
+    expect(elapsed).toBeLessThan(5000)
+    // 输出取自 turn 2 的最后一条 assistant 文本。
+    expect(JSON.stringify(outcome.output)).toContain('TASK_DONE')
   })
 })

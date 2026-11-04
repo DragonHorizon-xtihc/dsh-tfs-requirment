@@ -129,6 +129,11 @@ export interface TaskOrchestration {
    * 让任务详情能如实回答"这次为什么没复用"，而不是让人靠猜。
    */
   fallbackReason?: string
+  /**
+   * 主 agent 扫尾轮数（2026-11-03 问题 7）：本任务已被扫尾续跑过几轮。
+   * 超过上限即转"主 agent 亲做"，防止失败-续跑死循环（决策见 `shared/sweep.ts#decideSweep`）。
+   */
+  sweepRound?: number
 }
 
 /** 任务归纳状态（供 UI 与降级判定）。 */

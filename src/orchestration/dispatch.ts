@@ -7,21 +7,23 @@
  * - 每需求追踪：每次 dispatch 记录 `requirementId → runId`（S-09，每需求独立 session 的可追溯性）；
  * - 请求构造严格使用已核实的 `SubagentStartRequest` 真实字段（来自 dsh-subagent 的 types.d.ts）：
  *   `prompt: ContentBlock[]`、`parent: Agent`（必填）、`signal: AbortSignal`（必填）、
- *   `agentOptions`（承载 model/provider）、`toolFilter`（承载 MCP/技能工具范围）、`persona`、`maxDepth`。
+ *   `agentOptions`（承载 model/provider）、`agentPreset`、`maxDepth`。
  *
  * **关于 per-requirement session（S-09）**：当前实现为每个任务发起 ONE-SHOT run（各自一个 session，
- * run.id 即子会话 id），并在分发器内按 requirementId 归组追踪。若宿主支持 `startContinuable`
- * （dsh-subagent 已导出），后续可改为"每需求一个持久 continuable 子会话、任务在其 inbox 内续跑"，
- * 实现真正的单 session 多任务复用；本文件预留 `runsForRequirement` 供上层聚合。
+ * run.id 即子会话 id），并在分发器内按 requirementId 归组追踪。会话复用（continuable）由
+ * `host/orchestrator-session.ts` 承担，本文件预留 `runsForRequirement` 供上层聚合。
  *
  * **关于 parent（必填）**：`SubagentStartRequest.parent` 必须是真实的宿主 Agent（spawning agent）。
  * 插件运行在宿主 Agent 会话内，由宿主接线层（slots.ts / 工具层）在调用 `dispatch` 时注入当前 Agent，
  * 本模块不臆造 parent。
  *
- * `toolFilter`（MCP/技能选择 → 子 agent 可见工具范围）的真实形状为 dsh-tools 的 `ToolRestriction`，
- * 由宿主接线层依据用户在 ExecutionPanel 勾选的 MCP/技能构建后透传，本模块只做转发（不臆造结构）。
+ * **关于"所选技能 / MCP"**（2026-10-29 修正）：宿主 `SubagentStartRequest` **没有**
+ * `toolFilter` / `persona` 字段（tsc 会报 `TS2353`），`ctx.tools.restrict()` 又只接受
+ * **scoped** 上下文（`packages/core/tools/src/index.ts:1108`），插件无法从宿主半限制子会话可见工具。
+ * 因此技能/MCP 的"强制"落在 prompt 下发 + 落定后验收两条路径上，
+ * 见 `shared/capability-plan.ts` 与 `host/api.ts#prepareCapabilitySection`。
  *
- * 本模块仅依赖已核实的宿主类型（@deepseek-ai/dsh-subagent / dsh-llm / dsh-agent / dsh-tools），
+ * 本模块仅依赖已核实的宿主类型（@deepseek-ai/dsh-subagent / dsh-llm / dsh-agent），
  * 不直接 import cordis，便于在宿主接线层注入 `ctx.subagents`。
  *
  * @module @deepseek-ai/dsh-tfs-requirment/orchestration/dispatch
@@ -31,9 +33,9 @@ import type { SubagentStartRequest, SubagentRun } from '@deepseek-ai/dsh-subagen
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AgentOptions } from '@deepseek-ai/dsh-agent'
-import type { ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { RoleDefinition } from './roles.js'
 import type { FrozenConfig } from '../core/board/task.js'
+import type { RunTimeoutEvidence } from '../shared/run-timeout.js'
 
 /** 宿主 subagent 服务（ctx.subagents 的结构化子集）。 */
 export interface SubagentClient {
@@ -55,10 +57,8 @@ export interface DispatchRequest {
   prompt: ContentBlock[]
   /** 可选短标签（持久化到子会话）。 */
   label?: string
-  /** 子 agent 工具范围（由宿主按所选 MCP/技能构建的 ToolRestriction）。 */
-  toolFilter?: ToolRestriction
-  /** 可选 person 覆盖。 */
-  persona?: string
+  /** 可选 agent preset id（宿主 `SubagentStartRequest.agentPreset`）。 */
+  agentPreset?: string
   /** 可选委派深度上限（问题 1：限制孙 agent 无限派生；缺省由分发器构造默认值兜底）。 */
   maxDepth?: number
   /**
@@ -152,6 +152,29 @@ export interface DispatcherTimeouts {
    */
   runTimeoutMs?: number
   /**
+   * 到点后的**活性宽限**（毫秒，2026-11-04）。
+   *
+   * 到点先探一次子会话活动（{@link DispatcherTimeouts.probeActivity}）：最近仍有新事件 ⇒
+   * 判为正常长任务，再宽限这么久才终止（**只宽限一次**，总时长上界 = runTimeoutMs + grace）；
+   * 最近没有活动 ⇒ 直接按"失控空转"终止。0/缺省 = 不探测、到点即终止（旧行为）。
+   */
+  runTimeoutGraceMs?: number
+  /**
+   * 子会话活性巡检间隔（毫秒，2026-11-04）。
+   *
+   * 只在配了 `runTimeoutGraceMs` 时生效：每隔这么久探一次"最近还有事件吗"，
+   * 空闲超过 grace 就**立刻**按空转终止（不必等总时长到点）—— 真死循环不再白占并发槽两小时。
+   * 缺省按 grace/4 推导（下限 1s，仅测试用得上这么小）。
+   */
+  stallCheckMs?: number
+  /**
+   * 子会话活性探针（2026-11-04）：入参 runId，返回**最后一次会话事件的时刻**（epoch ms）。
+   *
+   * 不可观测时返回 undefined（服务缺失/会话已被清理）—— 调用方必须把"不知道"当成
+   * "不能据此判空转"，退回按总时长终止，绝不能因为探不到就更早杀掉。
+   */
+  probeActivity?: (runId: string) => Promise<number | undefined>
+  /**
    * 委派深度的默认上限（问题 1）。当 {@link DispatchRequest.maxDepth} 缺省/为 0 时用它兜底，
    * 防止上层漏传导致孙 agent 无限派生；通常取插件配置 `defaultMaxDepth`（默认 1）。0 = 不限制。
    */
@@ -204,9 +227,30 @@ interface ActiveRun {
   controller: AbortController
   /** 幂等归还并发槽：run 落定、看门狗终止、显式取消三条路径都会调它。 */
   releaseSlot: () => void
-  /** 总时长看门狗定时器（未启用时缺省）。 */
-  watchdog?: ReturnType<typeof setTimeout>
+  /** 总时长看门狗句柄（未启用时缺省）。 */
+  watchdog?: RunWatchdogHandle
 }
+
+/**
+ * 看门狗句柄（2026-11-04 起不再直接暴露 setTimeout 句柄）。
+ *
+ * 为什么换形态：活性宽限会让"当前生效的定时器"被重新武装一次，直接把 `setTimeout`
+ * 返回值存在 `ActiveRun` 上时，`cancel()` / `forget()` 拿到的永远是**第一个**句柄，
+ * 清不掉后来的定时器 ⇒ 已取消的任务仍会被看门狗"终止并标记超时"，把用户取消记成超时失败。
+ */
+interface RunWatchdogHandle {
+  /** 停掉看门狗（幂等）：之后到点也不会再终止 run、不会再登记超时标记。 */
+  dispose(): void
+}
+
+/**
+ * 看门狗终止原因（2026-11-04）。
+ *
+ * 旧实现只有一句"超过上限，可能存在死循环" —— 而真机上被掐死的那个 run 其实**刚刚产出完整报告**
+ * （见 `.workbuddy/memory/2026-11-04.md`），把正常长任务说成死循环会误导用户去做无谓排查。
+ * 现在按证据分两档；证据结构定义在 `shared/run-timeout.ts`（纯逻辑，可单测），这里只做别名。
+ */
+export type RunTimeoutDetail = RunTimeoutEvidence
 
 /**
  * 需求并发分发器：信号量 + 每需求 run 追踪。
@@ -222,6 +266,11 @@ export class RequirementDispatcher {
   private readonly byRequirement = new Map<string, Set<string>>()
   /** 被总时长看门狗终止的任务（问题 1）；上层收口时 consume 一次以落"超时失败"诊断。 */
   private readonly timedOut = new Set<string>()
+  /**
+   * taskId → 终止证据（2026-11-04）：实际跑了多久、最后一次活动距今多久、是否用过宽限。
+   * 上层收口时取一次即删（与 {@link timedOut} 同生命周期）。
+   */
+  private readonly timeoutDetails = new Map<string, RunTimeoutDetail>()
   /**
    * taskId → 在跑的 run 上下文。
    *
@@ -242,6 +291,11 @@ export class RequirementDispatcher {
     this.startTimeoutMs = timeouts.startTimeoutMs ?? 60_000
     this.queueTimeoutMs = timeouts.queueTimeoutMs ?? 300_000
     this.runTimeoutMs = timeouts.runTimeoutMs ?? 0
+    this.runTimeoutGraceMs = timeouts.runTimeoutGraceMs ?? 0
+    // 巡检间隔：显式优先；否则按 grace/4 推导（grace 未启用时不巡检，只走到点判定）。
+    this.stallCheckMs = timeouts.stallCheckMs
+      ?? (this.runTimeoutGraceMs >= 1 ? Math.max(1_000, Math.floor(this.runTimeoutGraceMs / 4)) : 0)
+    this.probeActivity = timeouts.probeActivity
     this.defaultMaxDepth = timeouts.defaultMaxDepth ?? 0
     this.defaultMaxTokens = timeouts.defaultMaxTokens ?? 0
   }
@@ -252,6 +306,12 @@ export class RequirementDispatcher {
   private readonly queueTimeoutMs: number
   /** 单次 run 总运行时长看门狗（毫秒；0 = 不启用）。 */
   private readonly runTimeoutMs: number
+  /** 到点活性宽限（毫秒；0 = 不探测、到点即终止）。 */
+  private readonly runTimeoutGraceMs: number
+  /** 活性巡检间隔（毫秒；0 = 不巡检，只在总时长到点时判一次）。 */
+  private readonly stallCheckMs: number
+  /** 子会话活性探针（缺省 = 无活性判据，只按总时长终止）。 */
+  private readonly probeActivity?: (runId: string) => Promise<number | undefined>
   /** 委派深度默认上限（0 = 不限制）。 */
   private readonly defaultMaxDepth: number
   /** 单次输出 token 默认上限（0 = 不限制）。 */
@@ -269,6 +329,18 @@ export class RequirementDispatcher {
   }
 
   /**
+   * 取出并清除某任务的**超时证据**（2026-11-04）。
+   *
+   * 与 {@link consumeTimeout} 配对：先 consume 判定"是否被看门狗终止"，再取证据生成诊断文案。
+   * 取不到（旧调用方/证据已被取走）时返回 undefined，调用方应退回中性文案。
+   */
+  takeTimeoutDetail(taskId: string): RunTimeoutDetail | undefined {
+    const detail = this.timeoutDetails.get(taskId)
+    if (detail) this.timeoutDetails.delete(taskId)
+    return detail
+  }
+
+  /**
    * 丢弃某任务的追踪记录（收口后调用）。
    *
    * 由上层在**已经消费完** {@link consumeTimeout} 之后调用：`timedOut` 早于消费者
@@ -280,8 +352,9 @@ export class RequirementDispatcher {
    */
   forget(taskId: string): void {
     const active = this.activeRuns.get(taskId)
-    if (active?.watchdog) clearTimeout(active.watchdog)
+    active?.watchdog?.dispose()
     this.activeRuns.delete(taskId)
+    this.timeoutDetails.delete(taskId)
     this.runs.delete(taskId)
     this.runHandles.delete(taskId)
     for (const [requirementId, set] of this.byRequirement) {
@@ -465,8 +538,11 @@ export class RequirementDispatcher {
         parent: ctx.parent,
         signal,
         agentOptions,
-        toolFilter: req.toolFilter,
-        persona: req.persona,
+        // 2026-10-29：宿主 `SubagentStartRequest.agentPreset` 是真实字段
+        // （`packages/subagent/subagent/src/types.ts:172-178`，要求 provider 的
+        // `capabilities.agentPreset` 为 true；spawn/fork 均为 true）。任务冻结的 preset
+        // 因此可以真正作用到子 agent，而不再只是"角色定义上的装饰"。
+        ...(req.frozenConfig.preset ? { agentPreset: req.frozenConfig.preset } : {}),
         ...(maxDepth > 0 ? { maxDepth } : {}),
       }
       const startPromise = Promise.resolve(this.client.start(req.role.provider, startRequest))
@@ -522,22 +598,49 @@ export class RequirementDispatcher {
   }
 
   /**
-   * 装上单次 run 的总时长看门狗（问题 1）。
+   * 装上单次 run 的总时长看门狗（问题 1；2026-11-04 增加活性判定与终止证据）。
    *
-   * run 启动后开始计时；超过 `runTimeoutMs` 仍未落定，则登记超时标记、abort 信号并 dispose
-   * 终止子 agent，使 `run.result` 尽快落定。run 正常落定（成功/失败）时清除定时器。
-   * 不启用（runTimeoutMs<1）时直接返回。
+   * 到点不再无条件终止，而是分两步：
+   *   1. 有活性探针且配了宽限 ⇒ 先探"最后一次会话事件是什么时候"；
+   *      - 最近仍有活动（`now - lastEvent < grace`）⇒ 判正常长任务，**宽限一次**（再等 grace，
+   *        之后无条件终止，保证总时长有硬上界）；
+   *      - 最近长时间无活动 ⇒ 判疑似失控空转，立即终止；
+   *      - 探不到（服务缺失/会话被清理）⇒ **不据此提前杀**，按总时长终止（fail-open）。
+   *   2. 无探针/未配宽限 ⇒ 到点即终止（旧行为）。
+   *
+   * 无论哪条路终止，都写一份 {@link RunTimeoutDetail}，让上层如实说明"跑了多久、最后一次活动
+   * 距今多久"，而不是笼统断言"可能存在死循环"。
    */
   private armRunWatchdog(
     taskId: string,
     run: SubagentRun,
     ac: AbortController,
     releaseSlot: () => void,
-  ): ReturnType<typeof setTimeout> | undefined {
+  ): RunWatchdogHandle | undefined {
     if (!(this.runTimeoutMs >= 1)) return undefined
-    const timer = setTimeout(() => {
-      if (this.timedOut.has(taskId)) return
+    const startedAt = Date.now()
+    let extended = false
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    /** 最近一次巡检测到的空闲时长（终止时作为证据写进 `RunTimeoutDetail`）。 */
+    let lastIdleMs: number | undefined
+    /** 停掉看门狗（幂等）：run 落定、显式取消、上层 forget 都走这里。 */
+    const dispose = (): void => {
+      disposed = true
+      if (timer) clearTimeout(timer)
+      timer = undefined
+    }
+    /** 终止 run 并登记证据（每个任务只生效一次）。 */
+    const kill = (kind: RunTimeoutDetail['kind'], lastActivityAgoMs?: number): void => {
+      if (disposed || this.timedOut.has(taskId)) return
+      dispose()
       this.timedOut.add(taskId)
+      this.timeoutDetails.set(taskId, {
+        kind,
+        ranMs: Date.now() - startedAt,
+        ...(lastActivityAgoMs !== undefined ? { lastActivityAgoMs } : {}),
+        extended,
+      })
       try {
         ac.abort()
       } catch {
@@ -547,13 +650,74 @@ export class RequirementDispatcher {
       // abort + dispose 不保证 run.result 一定落定（continuable / 跨进程 provider 可能无视信号），
       // 只把归还挂在 run.result.then 上会永久泄漏一个并发槽，因此看门狗自己归还。
       releaseSlot()
-    }, this.runTimeoutMs)
+    }
+    /** 到点检查：先看活性，再决定宽限还是终止；未到点则按巡检间隔重排。 */
+    const check = async (): Promise<void> => {
+      if (disposed) return
+      const ranMs = Date.now() - startedAt
+      if (ranMs >= this.runTimeoutMs) {
+        if (this.runTimeoutGraceMs >= 1 && this.probeActivity) {
+          let lastActivityAt: number | undefined
+          try {
+            lastActivityAt = await this.probeActivity(run.id)
+          } catch {
+            // 探针自身异常 ⇒ 视为"不可观测"，按总时长终止（不因探针故障伪造"空转"结论）。
+            lastActivityAt = undefined
+          }
+          // 探测期间 run 可能已落定/被取消：`disposed` 已置位时不要再杀。
+          if (disposed) return
+          const idleMs = lastActivityAt === undefined ? undefined : Date.now() - lastActivityAt
+          lastIdleMs = idleMs
+          const active = idleMs !== undefined && idleMs < this.runTimeoutGraceMs
+          if (active && !extended) {
+            extended = true
+            // 宽限只给一次：到点无条件终止（`kill('cap')`），总时长上界 = runTimeout + grace。
+            schedule(this.runTimeoutGraceMs)
+            return
+          }
+          if (idleMs !== undefined && !active) {
+            kill('inactivity', idleMs)
+            return
+          }
+        }
+        kill('cap', lastIdleMs)
+        return
+      }
+      // 未到总时长：做一次"空转"巡检（真死循环不必白占槽到总时长上限）。
+      if (this.stallCheckMs >= 1 && this.runTimeoutGraceMs >= 1 && this.probeActivity) {
+        let lastActivityAt: number | undefined
+        try {
+          lastActivityAt = await this.probeActivity(run.id)
+        } catch {
+          lastActivityAt = undefined
+        }
+        if (disposed) return
+        if (lastActivityAt !== undefined) {
+          const idleMs = Date.now() - lastActivityAt
+          lastIdleMs = idleMs
+          if (idleMs >= this.runTimeoutGraceMs) {
+            kill('inactivity', idleMs)
+            return
+          }
+        }
+        schedule(this.stallCheckMs)
+        return
+      }
+      // 没有活性判据 ⇒ 只等到点（旧语义）；把等待时间夹到"离上限还剩多少"，命中更精准。
+      schedule(Math.max(1, this.runTimeoutMs - ranMs))
+    }
+    /** 重排下一次检查（未到点按巡检间隔，到点后按剩余时长）。 */
+    const schedule = (ms: number): void => {
+      if (disposed) return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        void check()
+      }, Math.max(1, ms))
+    }
+    schedule(this.stallCheckMs >= 1 ? Math.min(this.stallCheckMs, this.runTimeoutMs) : this.runTimeoutMs)
     // 无论结果成败，落定即取消看门狗。
-    run.result.then(
-      () => clearTimeout(timer),
-      () => clearTimeout(timer),
-    )
-    return timer
+    run.result.then(dispose, dispose)
+    return { dispose }
   }
 
   /**
@@ -572,7 +736,7 @@ export class RequirementDispatcher {
       this.forget(taskId)
       return
     }
-    if (active.watchdog) clearTimeout(active.watchdog)
+    if (active.watchdog) active.watchdog.dispose()
     try {
       active.controller.abort()
     } catch {

@@ -104,6 +104,37 @@ describe('D7 gateProbeByParent：无顶层会话时前置阻断派发', () => {
     expect(out).toBe(badProbe)
     expect(called).toBe(false)
   })
+
+  // 2026-11-03：定时执行/从工作台直接发起时根本没有活跃会话 —— 只要宿主能现造会话
+  // （sessionController.create），就不该判成"能力不可用"把按钮拦住。
+  it('无顶层会话但宿主能现造会话（canPrepareParent）⇒ available:true + parentOnDemand', () => {
+    const out = gateProbeByParent(
+      { ...okProbe, api: 'startActivation' },
+      () => {
+        throw new Error('no top-level agent')
+      },
+      () => true,
+    )
+    expect(out.available).toBe(true)
+    expect(out.parentOnDemand).toBe(true)
+    expect(out.api).toBe('startActivation')
+    // 提示语只用于"不可用"分支，这里不该带（否则面板会把可用能力画成红色告警）。
+    expect(out.reason).toBeUndefined()
+  })
+
+  it('canPrepareParent 判定本身抛错 ⇒ 退回旧的阻断语义（不把异常当可用）', () => {
+    const out = gateProbeByParent(
+      okProbe,
+      () => {
+        throw new Error('no top-level agent')
+      },
+      () => {
+        throw new Error('probe crash')
+      },
+    )
+    expect(out.available).toBe(false)
+    expect(out.reason).toMatch(/请先在主会话/)
+  })
 })
 
 // ───────────────────── D5 / D4 subagent-access helper ─────────────────────

@@ -164,6 +164,18 @@ function fakeApi(calls: string[], captured: Record<string, unknown> = {}): HostA
       calls.push('roleDelete')
       return { ok: true }
     },
+    listSkillGroups: () => {
+      calls.push('skillGroups')
+      return []
+    },
+    saveSkillGroup: () => {
+      calls.push('skillGroupSave')
+      return { ok: true }
+    },
+    deleteSkillGroup: () => {
+      calls.push('skillGroupDelete')
+      return { ok: true }
+    },
     getBoard: () => {
       calls.push('board')
       return {
@@ -183,6 +195,26 @@ function fakeApi(calls: string[], captured: Record<string, unknown> = {}): HostA
     decomposeRequirement: async () => {
       calls.push('decompose')
       return { ok: true, taskIds: [], created: 0, skipped: 0 }
+    },
+    // 2026-11-03 问题 4/5：开始编排 + 调度清单/取消。
+    orchestrationStart: async input => {
+      calls.push('orchestrationStart')
+      captured['orchestrationStart'] = input
+      return { ok: true }
+    },
+    listSchedules: () => {
+      calls.push('listSchedules')
+      return []
+    },
+    cancelSchedule: id => {
+      calls.push('cancelSchedule')
+      captured['cancelScheduleId'] = id
+      return false
+    },
+    updateSchedule: (id, dueAt) => {
+      calls.push('updateSchedule')
+      captured['updateSchedule'] = { id, dueAt }
+      return { ok: true, scheduledAt: dueAt }
     },
     // 问题 7/8/11 + 问题 1/2/4/6 的新 HostApi 面。
     restoreRequirement: async key => {
@@ -638,6 +670,37 @@ describe('看板 / 自检路由（US3 / US6 / T029）', () => {
     await p
     expect(res.statusCode).toBe(200)
     expect('workspace' in (captured['claim'] as object)).toBe(false)
+  })
+
+  it('领取：prompt 字符串透传给 claimRequirement（2026-11-03 问题 1 回归：路由曾丢弃提示词）', async () => {
+    const calls: string[] = []
+    const captured: Record<string, unknown> = {}
+    const { req, emit } = makeReq('POST', {
+      id: 1997179,
+      collection: 'WN_HIS',
+      workspace: 'D:\\体检管理\\repo',
+      prompt: '按院感规范改造分诊流程',
+    })
+    const res = makeRes()
+    const p = createClaimHandler(fakeApi(calls, captured))(req as never, res as never)
+    emit()
+    await p
+    expect(res.statusCode).toBe(200)
+    const input = captured['claim'] as { workspace?: string; prompt?: string }
+    expect(input.workspace).toBe('D:\\体检管理\\repo')
+    expect(input.prompt).toBe('按院感规范改造分诊流程')
+  })
+
+  it('领取：prompt 非字符串 → 不下传该字段', async () => {
+    const calls: string[] = []
+    const captured: Record<string, unknown> = {}
+    const { req, emit } = makeReq('POST', { id: 1, prompt: 42 })
+    const res = makeRes()
+    const p = createClaimHandler(fakeApi(calls, captured))(req as never, res as never)
+    emit()
+    await p
+    expect(res.statusCode).toBe(200)
+    expect('prompt' in (captured['claim'] as object)).toBe(false)
   })
 
   it('拆解：缺 requirementId → 400；合法 → 200', async () => {

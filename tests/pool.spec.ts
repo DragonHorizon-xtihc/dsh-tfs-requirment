@@ -200,6 +200,27 @@ describe('buildTargetFill（US3 / FR-009）', () => {
     expect(fill!.description).toBe('【详细信息】\n短正文')
     expect(fill!.description).not.toContain('已截断')
   })
+
+  it('2026-11-03 问题 1/3：工作目录与需求级提示词随目标带出（含手填路径；不混进 execPrompt）', () => {
+    const fill = buildTargetFill(
+      sum(5, 'WN_HIS', {
+        title: '急诊',
+        description: '正文',
+        workspace: '  D:\\code\\his  ',
+        prompt: '  按院感规范改  ',
+      }),
+    )
+    expect(fill!.workspace).toBe('D:\\code\\his')
+    expect(fill!.reqPrompt).toBe('按院感规范改')
+    // 需求级提示词**不得**混进执行 Prompt（宿主派发时自动拼，复制进去会发两份）。
+    expect(fill!.execPrompt).not.toContain('按院感规范改')
+  })
+
+  it('2026-11-03 问题 1/3：目标未配置工作目录/提示词 → 空串（不覆盖表单已有值语义由调用方决定）', () => {
+    const fill = buildTargetFill(sum(5, 'WN_HIS', { description: '正文' }))
+    expect(fill!.workspace).toBe('')
+    expect(fill!.reqPrompt).toBe('')
+  })
 })
 
 // ───────────────────────── spec 008 US4：选为目标重复填充 ─────────────────────────

@@ -62,6 +62,8 @@ function makeApi(opts: {
   projects?: unknown
   /** 运行期集合 getter（US1 缓存按集合键分区；缺省回退 `deps.collection`）。 */
   currentCollection?: () => string
+  /** 宿主半加载时刻（2026-10-29：面板用于判断"构建后有没有重启"）。 */
+  pluginLoadedAt?: string
 } = {}): {
   api: ReturnType<typeof createHostApi>
   getDispatched: () => unknown
@@ -114,6 +116,7 @@ function makeApi(opts: {
     skills: [],
     tagSuggestions: ['dsh'],
     collection: 'WN_HIS',
+    ...(opts.pluginLoadedAt ? { pluginLoadedAt: opts.pluginLoadedAt } : {}),
     ...(opts.getRoleReferences ? { getRoleReferences: opts.getRoleReferences } : {}),
     ...(opts.currentCollection ? { currentCollection: opts.currentCollection } : {}),
   })
@@ -138,6 +141,13 @@ describe('getPanelData', () => {
     expect(data.collection).toBe('WN_HIS')
     expect(data.models).toEqual(['m-deep'])
     expect(data.mcpServers).toEqual(['tfs-mcp'])
+  })
+
+  it('透出宿主插件加载时刻（判断"构建后有没有重启"的依据）', () => {
+    const { api } = makeApi({ pluginLoadedAt: '2026-10-29T07:09:00.000Z' })
+    expect(api.getPanelData().pluginLoadedAt).toBe('2026-10-29T07:09:00.000Z')
+    // 未接线时不产出该键（不改变旧响应形状）。
+    expect(makeApi().api.getPanelData().pluginLoadedAt).toBeUndefined()
   })
 })
 
@@ -423,8 +433,31 @@ describe('dispatch · 工作目录接线（workspace → 派发 prompt 的任务
     await api.dispatch({ draft, targetWorkItem: '1997179@WN_HIS', collection: 'WN_HIS', taskId: TASK_ID })
     const text = promptTextOf(getDispatched)
     expect(text).not.toContain('【工作目录')
-    // 问题 1/5：无工作目录段时，正文后仍固定追加「执行纪律 + 完成/人工确认 + 产物协议」段。
-    expect(text).toBe('拆解需求为可执行任务\n\n' + buildExecBudgetSection())
+    // 问题 1/5：无工作目录段时，正文在最前、执行纪律段在最末。
+    expect(text.startsWith('拆解需求为可执行任务')).toBe(true)
+    expect(text).toContain(buildExecBudgetSection())
+    /**
+     * 2026-10-29（诉求 3）：draft 勾了 `tfs-mcp`，因此正文与纪律段之间**必须**出现
+     * 「必须使用的技能与 MCP」段 —— 旧实现只是把它写进冻结快照，子 agent 什么都收不到。
+     */
+    expect(text).toContain('【必须使用的技能与 MCP（强制执行')
+    expect(text).toContain('tfs-mcp')
+  })
+
+  it('角色默认 MCP（draft 未勾选）同样进入强制段：默认值不再只是"建议"', async () => {
+    const { api, getDispatched } = makeApi({
+      board: boardStub([{ taskId: TASK_ID, title: '分析需求' }]),
+    })
+    await api.dispatch({
+      draft: { ...draft, frozenConfig: { mcp: [], skills: [], model: 'm-deep' } },
+      targetWorkItem: '1997179@WN_HIS',
+      collection: 'WN_HIS',
+      taskId: TASK_ID,
+    })
+    const text = promptTextOf(getDispatched)
+    // 角色 defaultMcp = ['tfs-mcp'] ⇒ 冻结配置取默认值 ⇒ 同样被强制。
+    expect(text).toContain('【必须使用的技能与 MCP（强制执行')
+    expect(text).toContain('tfs-mcp')
   })
 
   it('任务未设 workspace → 回落到需求级 workspace（问题 1：两处配置任一都要生效）', async () => {

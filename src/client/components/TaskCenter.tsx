@@ -35,6 +35,8 @@ import {
 } from './OrchestratorChat.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { buildWorkItemUrl } from '../../shared/workitem-url.js'
+import { resolveChatFocusKey } from '../../shared/chat-panel.js'
+import { formatLocalMinute, parseDateTimeLocal } from '../../shared/schedule.js'
 import {
   filterCompletedRequirements,
   splitRequirementsByExecState,
@@ -62,6 +64,8 @@ import type {
   RequirementWriteBackReport,
   RestoreResult,
   RoleDefinition,
+  ScheduleEntryView,
+  SkillMcpGroup,
   TaskAction,
   TaskOpResult,
   TaskTraceResult,
@@ -102,11 +106,24 @@ const DEFAULT_CLAIMED_PAGE_SIZE = 10
 const DEFAULT_TASK_PAGE_SIZE = 20
 /** 已完成页「已完成需求」每页条数（问题 2；默认 10，档位复用 CLAIMED_PAGE_SIZE_OPTIONS）。 */
 const DEFAULT_DONE_PAGE_SIZE = 10
+/**
+ * 定时条目轮询间隔（2026-11-04）。
+ *
+ * 定时清单不写 board ⇒ 快照 `updatedAt` 变化驱动不了它，只能本页可见时主动问。
+ * 10s 足够覆盖"在别的页签登记 / 到点触发后条目消失"，且比快照轮询（~3s）轻。
+ */
+const SCHEDULE_POLL_MS = 10000
 
 /** 看板四态配色。 */
 const STATE_STYLE: Record<string, { color: string; bg: string; label: string }> = {
   pending: { color: '#b45309', bg: '#fef3c7', label: '待办' },
   in_progress: { color: '#1d4ed8', bg: '#dbeafe', label: '进行中' },
+  /**
+   * 2026-10-31：`state=in_progress` + `execState=failed` 时，"进行中"严重误导
+   * （任务已经停了，只是保留 in_progress 供重试，S-07 设计）。
+   * 渲染层在 execState=failed 时覆盖为"失败（可重试）"，语义与实际一致。
+   */
+  _failed_override: { color: '#b91c1c', bg: '#fee2e2', label: '失败（可重试）' },
   completed: { color: '#047857', bg: '#d1fae5', label: '已完成' },
   deleted: { color: '#6b7280', bg: '#f3f4f6', label: '已取消' },
 }
@@ -172,9 +189,11 @@ function Pill(props: { text: string; color: string; bg: string }): JSX.Element {
 function actionsFor(t: BoardTaskView): TaskAction[] {
   if (t.state === 'pending') return ['start', 'cancel']
   if (t.state === 'in_progress') {
-    // 问题 5：停在「待人工确认」时，不再提供"标记完成"（那是绕过人工），
-    // 而是显式「确认通过」(confirm) 或「标记失败 / 取消」；追问/补充在执行详情弹层。
-    if (t.execState === 'needs_confirmation') return ['confirm', 'fail', 'cancel']
+    // 问题 5：停在「待人工确认」时，不再提供"标记完成"（那是绕过人工）。
+    // 2026-10-30：**补上「重新执行」**——此前只有 confirm/fail/cancel，用户想"再跑一轮"
+    // 时没有入口，点「确认通过」只会把产出放行并收口（根本不触发第二次执行），
+    // 表现就是"第二轮没有执行"。确认通过 = 放行产出；重新执行 = 开新 attempt 重派发。
+    if (t.execState === 'needs_confirmation') return ['retry', 'confirm', 'fail', 'cancel']
     if (t.execState === 'running') return ['complete', 'fail', 'cancel']
     return ['retry', 'complete', 'fail', 'cancel']
   }
@@ -206,21 +225,33 @@ const ACTION_LABEL: Record<TaskAction, string> = {
  *
  * `cancel` 对在办任务是"取消"，对已完成任务则是"撤销完成"——后者是把它退回 deleted
  * 以便需求能还原，混用"取消"会让人以为要丢掉已完成的产出。
+ *
+ * 2026-10-30：待人工确认时 `confirm` 与 `retry` 的语义必须一眼可分——
+ * 「确认通过」只放行已有产出、**不会重新执行**；「重新执行」才开新一轮派发。
+ * （现场事故：用户点了确认通过，以为会有第二轮执行，实际上没有任何派发发生。）
  */
-function actionLabel(action: TaskAction, state: string): string {
-  if (action === 'cancel' && state === 'completed') return '撤销完成'
+function actionLabel(action: TaskAction, task: { state: string; execState: string }): string {
+  if (action === 'cancel' && task.state === 'completed') return '撤销完成'
+  if (task.execState === 'needs_confirmation') {
+    if (action === 'retry') return '重新执行'
+    if (action === 'confirm') return '确认通过（放行产出，不重跑）'
+  }
   return ACTION_LABEL[action]
 }
 
 /**
- * 问题 3：任务是否可编辑（未执行 / 失败待修正 / 待人工确认）。
- * 运行中（execState=running）由宿主 Board 门禁拒绝，这里直接不显示入口。
+ * 任务是否可编辑（2026-10-29 诉求 2 修正）。
+ *
+ * 判据与宿主引擎**严格同源**：`Board.updateTask` 只拒绝 `deleted` 与 `execState==='running'`
+ * （`core/board/board.ts:812-815`）。旧实现在 UI 侧另立一套更严的规则（只放 pending /
+ * failed / needs_confirmation），于是**等待依赖（in_progress + queued）**与取消过的任务
+ * 明明没在跑却看不到「编辑」按钮 —— 用户看到的正是"未执行的任务也不能切换模型/技能/MCP"。
+ *
+ * 现在：没在运行就能改（含排队中、待确认、失败），运行中一律隐藏入口（宿主也会拒）。
  */
 function taskEditable(t: BoardTaskView): boolean {
   if (t.state === 'deleted' || t.state === 'completed') return false
-  if (t.state === 'pending') return true
-  // in_progress 且非运行中（失败 / 待人工确认）允许在重试前调整。
-  return t.execState === 'failed' || t.execState === 'needs_confirmation'
+  return t.execState !== 'running'
 }
 
 /** 问题 5：从看板任务的 lastNote 中取出"待人工确认："后面的具体原因。 */
@@ -256,6 +287,14 @@ export function TaskCenter(props: {
     createdRoles?: string[]
     reason?: string
   }>
+  /**
+   * 开始编排（2026-11-03 问题 5）：拆解弹框选「立刻」立即串行编排子 Agent，
+   * 选「定时」登记到点后自动开始。缺省未接线时拆解后不自动开跑（旧行为）。
+   */
+  onOrchestrationStart?: (
+    requirementKey: string,
+    input: { mode: 'now' | 'at'; dueAt?: string; sequential?: boolean },
+  ) => Promise<{ ok: boolean; reason?: string; scheduledAt?: string }>
   onRestore?: (requirementKey: string) => Promise<RestoreResult>
   onDeleteTasks?: (taskIds: string[]) => Promise<DeleteTasksResult>
   /**
@@ -319,6 +358,8 @@ export function TaskCenter(props: {
   skillOptions?: DshSkillOption[]
   /** 宿主真实注册的 MCP server（问题 4）。 */
   mcpServers?: string[]
+  /** 技能/MCP 分组（2026-11-03 用户诉求：任务编辑弹框选分组自动带出技能/MCP）。 */
+  skillGroups?: SkillMcpGroup[]
   /** dsh 真实预设清单（问题 3：任务编辑弹框里选预设 / preset；value 用 preset id）。 */
   presets?: DshPresetOption[]
   /**
@@ -332,6 +373,25 @@ export function TaskCenter(props: {
    * 批量/单任务派发按钮前置禁用并提示，避免点完才在 dispatch 内失败。
    */
   orchestration?: { available: boolean; reason?: string }
+  /**
+   * 定时执行条目（2026-11-03 问题 3）：任务中心「定时执行」区 —— 到点时间可见、
+   * 可修改、可取消；需求行「执行状态」据此派生「定时待执行」。未接线（老宿主）不渲染该区。
+   */
+  onListSchedules?: () => Promise<{ ok: boolean; entries?: ScheduleEntryView[]; reason?: string }>
+  onCancelSchedule?: (id: string) => Promise<{ ok: boolean; reason?: string }>
+  onUpdateSchedule?: (
+    id: string,
+    dueAt: string,
+  ) => Promise<{ ok: boolean; reason?: string; scheduledAt?: string }>
+  /**
+   * 本页当前是否**可见**（2026-11-04 修复"定时执行看不见"）。
+   *
+   * 页签是保活的（`display:none` 而不卸载），组件**只挂载一次**：若只在挂载时拉一次定时清单，
+   * 之后"执行配置 → 定时执行"登记的条目永远进不来（定时登记**不写 board**，快照 `updatedAt`
+   * 不变 ⇒ 靠快照轮询刷新这条链完全失效）。因此把可见性传进来：切到本页立即刷新 +
+   * 可见期间定时轮询。缺省 true（独立使用的场景）。
+   */
+  active?: boolean
 }): JSX.Element {
   const [stateFilter, setStateFilter] = useState('')
   const [roleFilter, setRoleFilter] = useState('')
@@ -349,6 +409,8 @@ export function TaskCenter(props: {
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
   /** 问题 3：正在编辑的已领取需求（null = 关闭）。 */
   const [reqEdit, setReqEdit] = useState<RequirementSummary | null>(null)
+  /** 2026-11-03 问题 2/5：拆解弹框（强校验工作目录 + 立刻/定时编排）。 */
+  const [decomposeTarget, setDecomposeTarget] = useState<RequirementSummary | null>(null)
   /** 问题 4：正在编辑的任务（null = 关闭）。 */
   const [taskEdit, setTaskEdit] = useState<BoardTaskView | null>(null)
   /** spec 006：正在查看执行详情的任务 id（null = 关闭）；存 id 以便快照刷新后拿到最新任务对象。 */
@@ -361,6 +423,13 @@ export function TaskCenter(props: {
   const [donePageSize, setDonePageSize] = useState(DEFAULT_DONE_PAGE_SIZE)
   /** 问题 2：已完成页当前焦点需求（null = 未选，回落为第一条）。 */
   const [focusKey, setFocusKey] = useState<string | null>(null)
+  /**
+   * 主对话框焦点需求（2026-11-03 问题 1）：「已领取需求」行点选。
+   *
+   * 与「已完成」页的 `focusKey` 同构（行点击 + 焦点行标记），但落点是右侧主对话框。
+   * '' = 未显式选，由 {@link resolveChatFocusKey} 回落到需求筛选 / 首条进行中需求。
+   */
+  const [dialogFocusKey, setDialogFocusKey] = useState('')
 
   const hydratedRef = useRef(false)
   const loadUiStateRef = useRef(props.loadUiState)
@@ -399,15 +468,142 @@ export function TaskCenter(props: {
   }, [doneRequirementsAll])
   const activeTasks = useMemo(() => tasks.filter(t => !doneReqKeys.has(t.requirementId)), [tasks, doneReqKeys])
 
+  // ── 2026-11-03 问题 3：定时执行条目（可见 / 可改时间 / 可取消） ──
+  //
+  // 定时登记此刻不建看板任务（到点才派发），所以条目清单必须有自己的展示区；
+  // 需求行「执行状态」也据此把"无任务"派生为「定时待执行」而不是「未拆解」。
+  const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntryView[]>([])
+  const [scheduleMsg, setScheduleMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null)
+  /** 正在改时间的条目（null = 无）；dueAtLocal 为 datetime-local 控件值。 */
+  const [scheduleEdit, setScheduleEdit] = useState<{ id: string; dueAtLocal: string } | null>(null)
+  const onListSchedulesRef = useRef(props.onListSchedules)
+  onListSchedulesRef.current = props.onListSchedules
+  const refreshSchedules = (): void => {
+    const fn = onListSchedulesRef.current
+    if (!fn) return
+    void fn()
+      .then(r => {
+        if (r.ok) setScheduleEntries(r.entries ?? [])
+      })
+      .catch(() => {
+        /* 保留旧列表；下轮快照轮询再试 */
+      })
+  }
+  /**
+   * 本页可见性。页签保活 ⇒ 组件只挂载一次，**不能**只依赖挂载时的首拉：
+   * 定时登记不写 board（快照 `updatedAt` 不变），"执行配置 → 定时执行"新登记的条目
+   * 走不到下面那条 `snap.updatedAt` 依赖的刷新链（2026-11-04 根因）。
+   */
+  const pageActive = props.active !== false
+  // 快照轮询（约 3s）顺带同步定时条目：登记 / 到点触发 / 取消后能自行收敛。
+  useEffect(() => {
+    refreshSchedules()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap?.updatedAt])
+  // 切回本页签（`display:none` → 可见）立即拉一次：覆盖"在别的页签里登记了定时"。
+  const wasActiveRef = useRef(false)
+  useEffect(() => {
+    if (!pageActive) {
+      wasActiveRef.current = false
+      return
+    }
+    // 首次可见也拉（与上面的挂载首拉重复但幂等，省掉一次时序推理）。
+    if (!wasActiveRef.current) {
+      wasActiveRef.current = true
+      refreshSchedules()
+    }
+    // 可见期间定时轮询：定时清单不参与 `snap.updatedAt` 推导，只能主动问。
+    const timer = setInterval(() => refreshSchedules(), SCHEDULE_POLL_MS)
+    return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageActive])
+  /** 需求键 → 挂起定时条目的到点时刻（需求行派生用；同需求多条取最近一条）。 */
+  const scheduleDueByRequirement = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const e of scheduleEntries) {
+      if (!e.requirementKey) continue
+      const prev = m.get(e.requirementKey)
+      if (!prev || Date.parse(e.dueAt) < Date.parse(prev)) m.set(e.requirementKey, e.dueAt)
+    }
+    return m
+  }, [scheduleEntries])
+  /** ISO → `datetime-local` 控件值（本地时间、精确到分），用于改时间编辑器初值。 */
+  const toDateTimeLocal = (iso: string): string => {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    const p = (n: number): string => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+  const cancelScheduleEntry = async (id: string): Promise<void> => {
+    if (!props.onCancelSchedule) return
+    setScheduleMsg(null)
+    try {
+      const r = await props.onCancelSchedule(id)
+      if (r.ok) {
+        setScheduleMsg({ tone: 'ok', text: '已取消该定时条目' })
+        setScheduleEdit(null)
+        // 乐观摘除：下方 `refreshSchedules()` 是**对账**（宿主真实状态为准），
+        // 但它是一次额外往返 —— 不做这一步，用户点完"取消"会看到条目还挂在表里几百毫秒。
+        // 用函数式更新且只做 filter（幂等，StrictMode 双调用结果一致）。
+        setScheduleEntries(prev => prev.filter(e => e.id !== id))
+      } else {
+        setScheduleMsg({ tone: 'err', text: r.reason ?? '取消失败' })
+      }
+    } catch (e) {
+      setScheduleMsg({ tone: 'err', text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      refreshSchedules()
+    }
+  }
+  const commitScheduleTime = async (id: string): Promise<void> => {
+    if (!props.onUpdateSchedule || !scheduleEdit || scheduleEdit.id !== id) return
+    setScheduleMsg(null)
+    const parsed = parseDateTimeLocal(scheduleEdit.dueAtLocal)
+    if (!parsed.ok) {
+      setScheduleMsg({ tone: 'err', text: parsed.reason })
+      return
+    }
+    try {
+      const r = await props.onUpdateSchedule(id, parsed.plan.dueAt ?? '')
+      if (r.ok) {
+        const nextDueAt = r.scheduledAt ?? parsed.plan.dueAt ?? ''
+        setScheduleMsg({
+          tone: 'ok',
+          text: `已改到 ${formatLocalMinute(nextDueAt)}（本地时间）执行`,
+        })
+        setScheduleEdit(null)
+        // 乐观改写（同 cancel 的理由）：否则"提示已改到 X"和"行内还显示旧时间"会同时出现，
+        // 用户会以为没保存成功。函数式更新 + 只改匹配项 ⇒ 幂等。
+        setScheduleEntries(prev => prev.map(e => (e.id === id ? { ...e, dueAt: nextDueAt || e.dueAt } : e)))
+      } else {
+        setScheduleMsg({ tone: 'err', text: r.reason ?? '修改失败' })
+      }
+    } catch (e) {
+      setScheduleMsg({ tone: 'err', text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      refreshSchedules()
+    }
+  }
+
   // ── spec 010：把「焦点需求 + 可切换会话清单」发布给右侧主对话框 ──
   //
   // 对话框由**父槽位条目**（工作台）渲染，拿不到本组件的状态，故经模块级 store 传递。
-  // 焦点需求口径：用户显式选择的需求筛选优先，否则取第一条进行中需求。
-  const chatFocusKey = useMemo(() => {
-    if (requirementFilter) return requirementFilter
-    const first = activeRequirements[0]
-    return first ? `${first.id}@${first.collection}` : ''
-  }, [requirementFilter, activeRequirements])
+  // 焦点需求口径（2026-11-03 问题 1 改）：需求行显式点选优先（仍在进行中才生效），
+  // 其次需求筛选下拉，最后取第一条进行中需求 —— 推导纯函数在
+  // `shared/chat-panel.ts#resolveChatFocusKey`，行点选前的旧口径（下拉>首条）是
+  // "多需求并行时对话框永远停在第一条"的直接根因。
+  const activeRequirementKeys = useMemo(
+    () => activeRequirements.map(r => `${r.id}@${r.collection}`),
+    [activeRequirements],
+  )
+  const chatFocusKey = useMemo(
+    () => resolveChatFocusKey({
+      explicitKey: dialogFocusKey,
+      requirementFilter,
+      activeRequirementKeys,
+    }),
+    [dialogFocusKey, requirementFilter, activeRequirementKeys],
+  )
   const chatFocusReq = useMemo(
     () => requirements.find(r => `${r.id}@${r.collection}` === chatFocusKey),
     [requirements, chatFocusKey],
@@ -462,7 +658,22 @@ export function TaskCenter(props: {
               target: {
                 childSessionId: sessionId as string,
                 parentSessionId,
-                mode: (t.orchestration?.reused ? 'continuable' : 'one-shot') as 'continuable' | 'one-shot',
+                /**
+                 * 2026-11-04 修复「会话历史加载失败：subagent mode does not match the supplied
+                 * address（subagent/unauthorized）」。
+                 *
+                 * 旧实现按 `orchestration.reused` 猜模式（`reused ? 'continuable' : 'one-shot'`），
+                 * 但那个标志的含义是"**复用了已有子会话**"，与宿主描述符的 `mode` 毫无关系：
+                 * 一旦复用回退（宿主报 `belongs to another parent session`）就把 `reused` 置回 false，
+                 * 于是把一个 **continuable** 子会话标成 `one-shot`，宿主 `validateAddress`
+                 * （`dsh-api-session-controller/lib/index.js:1708`）直接拒绝读历史。
+                 *
+                 * 正确做法是不猜：宿主的契约里 `mode:'unknown'` 表示"调用方不知道，跳过校验"
+                 * （同处 `address.mode !== 'unknown' && …` 才报错）。真正的模式由宿主快照
+                 * `session.subagent.address.mode` 给出（见 `OrchestratorChat` 的 `continuable` 判定），
+                 * 不归我们推导。
+                 */
+                mode: 'unknown' as const,
               },
             }
           : { reason: '该任务还没有会话（尚未派发过，或宿主未回绑会话 id）' }),
@@ -473,6 +684,10 @@ export function TaskCenter(props: {
       visible: true,
       requirementKey: chatFocusKey,
       requirementTitle: chatFocusReq?.title ?? chatFocusKey,
+      // 2026-11-03 问题 6/1：工作目录与需求级提示词随模型下发 ——
+      // 对话框据此做「创建编排会话」的工作目录前置校验，并可见需求级提示词。
+      ...(chatFocusReq?.workspace ? { requirementWorkspace: chatFocusReq.workspace } : {}),
+      ...(chatFocusReq?.prompt ? { requirementPrompt: chatFocusReq.prompt } : {}),
       ...(orch
         ? {
             orchestrator: {
@@ -585,19 +800,15 @@ export function TaskCenter(props: {
   const pageTasks = taskPaging.paginate(filtered)
 
 /**
- * 表头全选的作用域：**当前页**（与行复选框一致）。
+ * 表头全选的作用域：**当前筛选命中的全集**（2026-11-03 用户诉求 1「筛选后支持全选和取消全选」）。
  *
- * 原来两个表头复选框作用在整个 `filtered` 上，而行复选框是页内局部、全选后确认框只报一个
- * 数字：于是在 8 页的第 2 页点一下表头，会把 213 条看不见的记录一次性删掉，而用户看到的
- * 只有"已选 213 个"和一次例行确认。跨页全选并非需求：批量删除是**不可撤销**的破坏性操作，
- * 它的选择范围必须与用户当下能看见、能逐条核对的内容一致；确实要处理多页时翻页再全选即可
- * （选中集合跨页累积，不会被翻页清掉）。
+ * 此前作用域是"当前页"（防批量删除误伤看不见的记录）；用户明示要按筛选结果全选，
+ * 现改为跨页全集，并配套：① 筛选条提供「全选 / 取消全选」按钮；② 批量删除仍有
+ * 带数量的二次确认（"确认删除 N 个已取消任务？"），确认框里的 N 就是筛选全集的数量，
+ * 不会出现"只报一个数字、用户不知道范围"的静默误删。
+ * 行复选框仍逐条可见可核对；选中集合跨页累积，翻页不清。
+ * （`dispatchableIds` / `filteredDeletedIds` 即筛选全集，见上方 useMemo。）
  */
-const pageDispatchableIds = useMemo(
-() => pageTasks.filter(t => t.state === 'pending' || t.state === 'in_progress').map(t => t.taskId),
-[pageTasks],
-)
-const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted').map(t => t.taskId), [pageTasks])
 
   /**
    * 问题 2：已完成页的焦点需求（决定下方任务表显示谁）。
@@ -619,7 +830,8 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
     [focusRequirementKey, tasks],
   )
 
-  const allTasksChecked = pageDispatchableIds.length > 0 && pageDispatchableIds.every(id => selectedTasks.has(id))
+  // 2026-11-03 用户诉求 1：全选/取消全选作用于**筛选全集**（跨页），非当前页。
+  const allTasksChecked = dispatchableIds.length > 0 && dispatchableIds.every(id => selectedTasks.has(id))
   const toggleTask = (id: string, checked: boolean): void => {
     setSelectedTasks(prev => {
       const next = new Set(prev)
@@ -631,7 +843,7 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
   const toggleAllTasks = (checked: boolean): void => {
     setSelectedTasks(prev => {
       const next = new Set(prev)
-      for (const id of pageDispatchableIds) {
+      for (const id of dispatchableIds) {
         if (checked) next.add(id)
         else next.delete(id)
       }
@@ -717,11 +929,12 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
     })
   }
 
-  const allDeletedChecked = pageDeletedIds.length > 0 && pageDeletedIds.every(id => selectedDeleted.has(id))
+  // 2026-11-03 用户诉求 1：已取消任务的全选同样作用于**筛选全集**（跨页）。
+  const allDeletedChecked = filteredDeletedIds.length > 0 && filteredDeletedIds.every(id => selectedDeleted.has(id))
   const toggleAllDeleted = (checked: boolean): void => {
     setSelectedDeleted(prev => {
       const next = new Set(prev)
-      for (const id of pageDeletedIds) {
+      for (const id of filteredDeletedIds) {
         if (checked) next.add(id)
         else next.delete(id)
       }
@@ -938,10 +1151,128 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
         </div>
       )}
 
+      {/* 2026-11-03 问题 3：定时执行条目区 —— 到点时间可见、可修改、可取消。
+          定时登记此刻不建看板任务，没有这个区用户会以为"定时没生效"。 */}
+      {viewTab === 'active' && props.onListSchedules && (
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+            定时执行（{scheduleEntries.length}）
+            <span style={{ fontWeight: 400, color: '#6b7280', marginLeft: 6 }}>
+              ｜ 到点自动派发/编排，可修改执行时间或取消
+            </span>
+          </div>
+          {scheduleMsg && (
+            <div
+              style={{
+                marginBottom: 8,
+                fontSize: 12,
+                color: scheduleMsg.tone === 'ok' ? '#047857' : '#b91c1c',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {scheduleMsg.text}
+            </div>
+          )}
+          {scheduleEntries.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#6b7280' }}>暂无待执行的定时条目。</div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', color: '#6b7280' }}>
+                    <th style={cellStyle}>类型</th>
+                    <th style={cellStyle}>备注</th>
+                    <th style={cellStyle}>到点时间（本地）</th>
+                    <th style={cellStyle}>登记于</th>
+                    <th style={cellStyle} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {scheduleEntries.map(e => (
+                    <tr key={e.id} style={{ borderTop: '1px solid #f3f4f6' }}>
+                      <td style={cellStyle}>
+                        <Pill
+                          text={e.kind === 'chain' ? '定时编排' : '定时执行'}
+                          color="#7c3aed"
+                          bg="#f5f3ff"
+                        />
+                      </td>
+                      <td style={{ ...cellStyle, maxWidth: 300 }} title={e.note ?? e.id}>
+                        {e.note ?? e.id}
+                        {e.requirementKey && (
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>需求 {e.requirementKey}</div>
+                        )}
+                      </td>
+                      <td style={cellStyle}>
+                        {scheduleEdit?.id === e.id ? (
+                          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <input
+                              type="datetime-local"
+                              style={inputStyle}
+                              value={scheduleEdit.dueAtLocal}
+                              onChange={ev => setScheduleEdit({ id: e.id, dueAtLocal: ev.target.value })}
+                            />
+                            <button
+                              type="button"
+                              style={{ ...buttonStyle, padding: '3px 8px', fontSize: 12 }}
+                              onClick={() => void commitScheduleTime(e.id)}
+                            >
+                              保存
+                            </button>
+                            <button
+                              type="button"
+                              style={{ ...buttonStyle, padding: '3px 8px', fontSize: 12 }}
+                              onClick={() => setScheduleEdit(null)}
+                            >
+                              放弃
+                            </button>
+                          </span>
+                        ) : (
+                          <span title={e.dueAt}>{formatLocalMinute(e.dueAt)}</span>
+                        )}
+                      </td>
+                      <td style={cellStyle}>
+                        <span title={e.createdAt}>{formatLocalMinute(e.createdAt)}</span>
+                      </td>
+                      <td style={{ ...cellStyle, whiteSpace: 'nowrap' }}>
+                        {scheduleEdit?.id !== e.id && (
+                          <>
+                            <button
+                              type="button"
+                              style={{ ...buttonStyle, marginRight: 6, padding: '3px 8px', fontSize: 12 }}
+                              onClick={() =>
+                                setScheduleEdit({ id: e.id, dueAtLocal: toDateTimeLocal(e.dueAt) })
+                              }
+                            >
+                              改时间
+                            </button>
+                            <button
+                              type="button"
+                              style={{ ...buttonStyle, padding: '3px 8px', fontSize: 12, color: '#b91c1c' }}
+                              onClick={() => void cancelScheduleEntry(e.id)}
+                            >
+                              取消
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {viewTab === 'active' && activeRequirements.length > 0 && (
         <div style={sectionStyle}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
             已领取需求（{activeRequirements.length}）
+            {/* 2026-11-03 问题 1：点行切换主对话框的入口提示（行本身也带 title）。 */}
+            <span style={{ fontWeight: 400, color: '#6b7280', marginLeft: 6 }}>
+              ｜ 点行切换右侧主对话框，并筛选下方任务列表
+            </span>
             {/* 问题 3：已完成需求从这里"搬走"了，明确告知搬到哪 —— 否则用户以为记录丢了。 */}
             {doneRequirementsAll.length > 0 && (
               <span style={{ fontWeight: 400, color: '#6b7280', marginLeft: 6 }}>
@@ -968,8 +1299,28 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                   const ownTasks = tasks.filter(t => t.requirementId === key)
                   const activeCount = ownTasks.filter(t => t.state !== 'deleted').length
                   const deletedCount = ownTasks.length - activeCount
+                  // 焦点行标记（2026-11-03 问题 1）：该行 = 右侧主对话框当前显示的需求。
+                  const isChatFocus = key === chatFocusKey
                   return (
-                    <tr key={key}>
+                    <tr
+                      key={key}
+                      onClick={() => {
+                        // 2026-11-03 问题 1（第二批反馈）：行点击不只切右侧主对话框，
+                        // 还要把**任务列表**随需求切走（此前只 setDialogFocusKey，
+                        // 任务表仍按旧 requirementFilter 过滤，"切了需求任务没动"）。
+                        // 口径与需求下拉 onChange 完全一致：显式焦点 + 需求过滤 + 回第一页。
+                        setDialogFocusKey(key)
+                        setRequirementFilter(key)
+                        taskPaging.resetPage()
+                      }}
+                      title="点击切换右侧主对话框到该需求，并筛选任务列表只看该需求的任务"
+                      aria-current={isChatFocus ? 'true' : undefined}
+                      style={{
+                        cursor: 'pointer',
+                        background: isChatFocus ? '#f0f9ff' : undefined,
+                        boxShadow: isChatFocus ? 'inset 3px 0 0 #2563eb' : undefined,
+                      }}
+                    >
                       <td style={cellStyle}>{key}</td>
                       <td style={{ ...cellStyle, maxWidth: 320 }} title={r.title}>
                         {(() => {
@@ -981,6 +1332,7 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                               rel="noreferrer noopener"
                               style={{ color: '#2563eb', textDecoration: 'none' }}
                               title={`在 TFS 中打开需求 #${r.id}：${href}`}
+                              onClick={e => e.stopPropagation()}
                             >
                               {r.title}
                               <span style={{ marginLeft: 4, fontSize: 11, color: '#6b7280' }}>↗</span>
@@ -1002,10 +1354,14 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                           </div>
                         )}
                       </td>
-                      {/* 问题 4：执行状态（由任务集合派生：未拆解/执行中/有失败/待办/已完成 c/t）。 */}
+                      {/* 问题 4：执行状态（由任务集合派生：未拆解/定时待执行/执行中/有失败/待办/已完成 c/t）。 */}
                       <td style={cellStyle}>
                         {(() => {
-                          const s = summarizeRequirementExec(r, ownTasks)
+                          const s = summarizeRequirementExec(
+                            r,
+                            ownTasks,
+                            scheduleDueByRequirement.get(key),
+                          )
                           const st = REQ_EXEC_STYLE[s.tone]
                           return <Pill text={s.text} color={st.color} bg={st.bg} />
                         })()}
@@ -1016,13 +1372,12 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                         <button
                           style={{ ...buttonStyle, marginRight: 6 }}
                           disabled={busy}
-                          onClick={() =>
-                            run(
-                              () => props.onDecompose(key),
-                              `已拆解 ${key}`,
-                              { resetTaskPage: true },
-                            )
-                          }
+                          onClick={e => {
+                            e.stopPropagation()
+                            // 2026-11-03 问题 2/5：先弹拆解弹框（无工作目录时强制填；
+                            // 立刻=立即串行编排，定时=到点自动开始），确认后才真正拆解。
+                            setDecomposeTarget(r)
+                          }}
                           title="重新拆解会把已取消的任务原地重建为全新待办任务；在办/已完成任务跳过"
                         >
                           {ownTasks.length > 0
@@ -1030,7 +1385,13 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                             : '拆解为任务'}
                         </button>
                         {props.onSelectRequirement && (
-                          <button style={{ ...buttonStyle, marginRight: 6 }} onClick={() => props.onSelectRequirement?.(r)}>
+                          <button
+                            style={{ ...buttonStyle, marginRight: 6 }}
+                            onClick={e => {
+                              e.stopPropagation()
+                              props.onSelectRequirement?.(r)
+                            }}
+                          >
                             选为目标
                           </button>
                         )}
@@ -1040,7 +1401,10 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                             style={{ ...buttonStyle, marginRight: 6 }}
                             disabled={busy}
                             title="编辑该需求的提示词与工作目录"
-                            onClick={() => setReqEdit(r)}
+                            onClick={e => {
+                              e.stopPropagation()
+                              setReqEdit(r)
+                            }}
                           >
                             编辑
                           </button>
@@ -1059,7 +1423,10 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
               style={{ ...buttonStyle, marginRight: 6 }}
               disabled={busy}
               title="全部任务都已取消：手动确认需求已处理完，归入「已完成」页（可再「取消完成」撤回）"
-              onClick={() => void setReqExecState(key, 'completed')}
+              onClick={e => {
+                e.stopPropagation()
+                void setReqExecState(key, 'completed')
+              }}
             >
               标记完成
             </button>
@@ -1069,7 +1436,10 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
               style={dangerButtonStyle}
               disabled={busy || activeCount > 0}
                             title={activeCount > 0 ? '仍有未取消的任务，无法还原' : '还原到需求池（清理已取消任务）'}
-                            onClick={() => void restore(key)}
+                            onClick={e => {
+                              e.stopPropagation()
+                              void restore(key)
+                            }}
                           >
                             还原到需求池
                           </button>
@@ -1136,6 +1506,9 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
             value={requirementFilter}
             onChange={e => {
               setRequirementFilter(e.target.value)
+              // 下拉也是对话框切换入口（旧口径唯一入口）：显式焦点与之同步，
+              // 避免"行点选 B 后把下拉切到 A，对话框仍停在 B"的分裂状态。
+              setDialogFocusKey(e.target.value)
               taskPaging.resetPage()
             }}
           >
@@ -1158,6 +1531,31 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
           <span style={{ fontSize: 12, color: '#6b7280' }}>
             命中 {filtered.length} / 共 {activeTasks.length}
           </span>
+          {/* 2026-11-03 用户诉求 1：筛选后一键全选/取消全选（作用域 = 筛选全集，跨页）。
+              全选同时勾上可派发任务与已取消任务两类可操作行；各自仍可用表头复选框单独全选。 */}
+          <button
+            type="button"
+            style={{ ...buttonStyle, padding: '4px 10px', fontSize: 12 }}
+            disabled={dispatchableIds.length === 0 && filteredDeletedIds.length === 0}
+            title="勾选当前筛选命中的全部可操作任务（可派发 + 已取消，跨页）"
+            onClick={() => {
+              toggleAllTasks(true)
+              toggleAllDeleted(true)
+            }}
+          >
+            全选
+          </button>
+          <button
+            type="button"
+            style={{ ...buttonStyle, padding: '4px 10px', fontSize: 12 }}
+            disabled={selectedTasks.size === 0 && selectedDeleted.size === 0}
+            onClick={() => {
+              toggleAllTasks(false)
+              toggleAllDeleted(false)
+            }}
+          >
+            取消全选
+          </button>
         </div>
         {/* 问题 8：批量删除已取消任务的操作条。 */}
         {props.onDeleteTasks && selectedDeleted.size > 0 && (
@@ -1228,26 +1626,26 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ textAlign: 'left', color: '#6b7280' }}>
-                  {/* 问题 8：表头全选（作用域 = 当前筛选命中的全部已取消任务）。 */}
+                  {/* 问题 8：表头全选（作用域 = 当前筛选命中的全部已取消任务，2026-11-03 起跨页）。 */}
                   {props.onDeleteTasks && (
                     <th style={{ ...cellStyle, width: 32 }}>
                       <input
                         type="checkbox"
                         aria-label="全选当前筛选下的已取消任务"
                         checked={allDeletedChecked}
-                        disabled={pageDeletedIds.length === 0}
+                        disabled={filteredDeletedIds.length === 0}
                         onChange={e => toggleAllDeleted(e.target.checked)}
                       />
                     </th>
                   )}
-                  {/* 问题 5：勾选列（作用域 = 当前筛选下的可派发任务，不仅是当前页）。 */}
+                  {/* 问题 5：勾选列（作用域 = 当前筛选下的可派发任务，2026-11-03 起跨页）。 */}
                   {props.onDispatchBatch && (
                     <th style={{ ...cellStyle, width: 32 }}>
                       <input
                         type="checkbox"
                         aria-label="全选当前筛选下可派发的任务"
                         checked={allTasksChecked}
-                        disabled={pageDispatchableIds.length === 0}
+                        disabled={dispatchableIds.length === 0}
                         onChange={e => toggleAllTasks(e.target.checked)}
                       />
                     </th>
@@ -1265,7 +1663,10 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
               </thead>
               <tbody>
                 {pageTasks.map(t => {
-                  const st = STATE_STYLE[t.state] ?? { color: '#374151', bg: '#f3f4f6', label: t.state }
+                  // 2026-10-31：execState=failed 时覆盖 state 徽章文案（"进行中"误导）。
+                  const st = t.execState === 'failed' && t.state === 'in_progress'
+                    ? STATE_STYLE._failed_override!
+                    : (STATE_STYLE[t.state] ?? { color: '#374151', bg: '#f3f4f6', label: t.state })
                   const ex = EXEC_STYLE[t.execState] ?? { color: '#374151', label: t.execState }
                   const waiting = t.state === 'pending' && t.blockedBy.length > 0
                   const deletable = t.state === 'deleted' && !!props.onDeleteTasks
@@ -1373,6 +1774,7 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                         <div style={{ color: '#9ca3af', fontSize: 10 }}>
                           模型 {t.frozenConfig.model ? formatModelRoute(props.modelOptions, t.frozenConfig.model, t.frozenConfig.modelProvider) : '（默认）'}
                           {t.frozenConfig.skills.length > 0 ? ` ｜ 技能 ${t.frozenConfig.skills.length}` : ''}
+                          {t.frozenConfig.workflow ? ` ｜ 工作流 ${t.frozenConfig.workflow}` : ''}
                           {t.frozenConfig.mcp.length > 0 ? ` ｜ MCP ${t.frozenConfig.mcp.join('、')}` : ''}
                         </div>
                       </td>
@@ -1458,7 +1860,7 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                           <button
                             style={{ ...buttonStyle, marginRight: 4 }}
                             disabled={busy}
-                            title="编辑该任务的提示词、模型、预设、技能、MCP 与执行预算"
+                            title="编辑该任务的提示词、模型、预设、技能、工作流、MCP 与执行预算"
                             onClick={() => setTaskEdit(t)}
                           >
                             编辑
@@ -1491,11 +1893,11 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
                             onClick={() =>
                               run(
                                 () => props.onTaskState(t.taskId, a, t.revision),
-                                `${actionLabel(a, t.state)}：${t.taskId} 已更新`,
+                                `${actionLabel(a, t)}：${t.taskId} 已更新`,
                               )
                             }
                           >
-                            {actionLabel(a, t.state)}
+                            {actionLabel(a, t)}
                           </button>
                         ))}
                         {deletable && (
@@ -1827,6 +2229,56 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
         />
       )}
 
+      {/* 2026-11-03 问题 2/5：拆解弹框 —— 无工作目录时强制「设置工作目录」；
+          立刻=拆解后立即串行编排子 Agent，定时=到点自动开始编排。 */}
+      {decomposeTarget && (
+        <DecomposeDialog
+          requirement={decomposeTarget}
+          workspaces={props.workspaces ?? []}
+          busy={busy}
+          onCancel={() => setDecomposeTarget(null)}
+          onConfirm={async plan => {
+            // 校验失败返回可读原因（弹框内展示、不关闭）；成功返回 null（关闭后走主消息区）。
+            const key = `${decomposeTarget.id}@${decomposeTarget.collection}`
+            const ws = plan.workspace.trim()
+            if (!ws && !decomposeTarget.workspace) {
+              return '请先设置工作目录（拆解出的任务会继承它，子 agent 据此定位代码库）'
+            }
+            let dueIso: string | undefined
+            if (plan.mode === 'at') {
+              const v = parseDateTimeLocal(plan.dueAtLocal)
+              if (!v.ok) return v.reason
+              dueIso = v.plan.dueAt
+            }
+            // 弹框里填了/改了工作目录 ⇒ 先落需求（拆解出的任务会继承）。
+            if (ws && ws !== (decomposeTarget.workspace ?? '') && props.onUpdateRequirement) {
+              const r = await props.onUpdateRequirement(key, { workspace: ws })
+              if (!r.ok) return r.reason ?? '保存工作目录失败'
+            }
+            setDecomposeTarget(null)
+            const ok = await run(() => props.onDecompose(key), `已拆解 ${key}`, { resetTaskPage: true })
+            if (!ok) return null // run 已把失败原因写进主消息区
+            // 问题 5：拆解成功后开始编排（串行：上个任务完成才编排下个）。
+            if (props.onOrchestrationStart) {
+              const start = await props.onOrchestrationStart(key, {
+                mode: plan.mode,
+                sequential: true,
+                ...(dueIso ? { dueAt: dueIso } : {}),
+              })
+              setMsg(start.ok
+                ? {
+                    tone: 'ok',
+                    text: plan.mode === 'at'
+                      ? `已登记定时编排：到 ${formatLocalMinute(start.scheduledAt)}（本地时间）主 agent 自动开始`
+                      : '已开始编排（串行：上个任务完成才编排下个）',
+                  }
+                : { tone: 'err', text: `拆解完成，但开始编排失败：${start.reason ?? '未知原因'}` })
+            }
+            return null
+          }}
+        />
+      )}
+
       {/* 问题 4：任务编辑弹框（提示词 / 模型 / 技能 / MCP / 工作目录） */}
       {taskEdit && (
         <TaskEditDialog
@@ -1835,6 +2287,7 @@ const pageDeletedIds = useMemo(() => pageTasks.filter(t => t.state === 'deleted'
           modelOptions={props.modelOptions ?? []}
           skillOptions={props.skillOptions ?? []}
           mcpServers={props.mcpServers ?? []}
+          skillGroups={props.skillGroups ?? []}
           presets={props.presets ?? []}
           busy={busy}
           onCancel={() => setTaskEdit(null)}
@@ -1981,6 +2434,132 @@ export function RequirementEditDialog(props: {
 }
 
 /**
+ * 拆解弹框（2026-11-03 问题 2/5）。
+ *
+ *   - **问题 2**：需求没配工作目录时弹出「设置工作目录」且必填（拆解出的任务会继承它，
+ *     子 agent 据 prompt 里的硬约束定位代码库）；已配过则可改可留空。
+ *   - **问题 5**：执行时机 立刻（默认）/ 定时（`datetime-local`，精确到分）。
+ *     立刻 = 拆解成功后主 agent 立即**串行**编排（上个任务完成才编排下个，依赖序由
+ *     任务 `blockedBy` 保证）；定时 = 登记到点自动开始（落盘，重启补跑）。
+ *
+ * `onConfirm` 返回 null = 成功（弹框关闭，结果经主消息区展示）；返回字符串 = 弹框内
+ * 展示该原因并保持打开（供用户改完重试）。
+ */
+export function DecomposeDialog(props: {
+  requirement: RequirementSummary
+  workspaces: DshWorkspaceOption[]
+  busy: boolean
+  onCancel: () => void
+  onConfirm: (plan: { mode: 'now' | 'at'; dueAtLocal: string; workspace: string }) => Promise<string | null>
+}): JSX.Element {
+  const needWorkspace = !(props.requirement.workspace ?? '').trim().length
+  const [workspace, setWorkspace] = useState(props.requirement.workspace ?? '')
+  const [mode, setMode] = useState<'now' | 'at'>('now')
+  const [dueAtLocal, setDueAtLocal] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const listed = props.workspaces.some(w => w.path === workspace)
+
+  return (
+    <div style={overlayStyle} onClick={props.onCancel}>
+      <div style={dialogStyle} onClick={e => e.stopPropagation()}>
+        <h3 style={{ margin: '0 0 6px' }}>
+          拆解任务：{props.requirement.id} {props.requirement.title}
+        </h3>
+        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 6 }}>
+          拆解为默认五段式任务（分析 → 架构师拆解 → 开发 → 代码审核 → 测试）；
+          重新拆解会把已取消的任务原地重建为全新待办任务，在办/已完成任务跳过。
+        </div>
+
+        {/* 问题 2：工作目录必填门槛（需求未配置时）。 */}
+        <label style={fieldLabelStyle}>
+          工作目录{needWorkspace ? '（必填：拆解出的任务会继承，子 agent 据此定位代码库）' : '（由拆解出的任务继承）'}
+        </label>
+        {props.workspaces.length > 0 && (
+          <select
+            style={{ ...fieldStyle, marginBottom: 6 }}
+            value={listed ? workspace : ''}
+            onChange={e => setWorkspace(e.target.value)}
+          >
+            <option value="">— 从 dsh 已添加的工作区选择 —</option>
+            {props.workspaces.map(w => (
+              <option key={w.id} value={w.path}>
+                {w.title}
+                {w.path ? `（${w.path}）` : ''}
+              </option>
+            ))}
+          </select>
+        )}
+        <input
+          style={fieldStyle}
+          placeholder="绝对路径，如 D:\\code\\his"
+          value={workspace}
+          onChange={e => setWorkspace(e.target.value)}
+        />
+        {needWorkspace && (
+          <div style={{ fontSize: 11, color: '#b45309', marginTop: 2 }}>
+            该需求尚未设置工作目录：请先填写（下拉选或手填绝对路径），才能拆解。
+          </div>
+        )}
+
+        {/* 问题 5：执行时机。 */}
+        <label style={fieldLabelStyle}>执行时机</label>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 13, cursor: 'pointer' }}>
+            <input type="radio" checked={mode === 'now'} onChange={() => setMode('now')} style={{ marginRight: 4 }} />
+            立刻（默认）
+          </label>
+          <label style={{ fontSize: 13, cursor: 'pointer' }}>
+            <input type="radio" checked={mode === 'at'} onChange={() => setMode('at')} style={{ marginRight: 4 }} />
+            定时
+          </label>
+          {mode === 'at' && (
+            <input
+              type="datetime-local"
+              style={{ ...fieldStyle, width: 'auto' }}
+              value={dueAtLocal}
+              onChange={e => setDueAtLocal(e.target.value)}
+            />
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+          {mode === 'now'
+            ? '拆解成功后主 agent 立即按依赖顺序编排子 Agent（上个任务完成才编排下个）。'
+            : '到点后主 agent 自动开始编排（精确到分；定时条目落盘，插件重启后到点仍会执行）。'}
+        </div>
+
+        {error && (
+          <div style={{ fontSize: 12, color: '#dc2626', marginTop: 8 }}>{error}</div>
+        )}
+
+        <div style={{ marginTop: 14, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            style={{ ...buttonStyle, background: '#2563eb', color: '#fff', borderColor: '#2563eb' }}
+            disabled={props.busy || submitting}
+            onClick={() => {
+              setError('')
+              setSubmitting(true)
+              void props
+                .onConfirm({ mode, dueAtLocal, workspace })
+                .then(reason => {
+                  if (reason) setError(reason)
+                })
+                .finally(() => setSubmitting(false))
+            }}
+          >
+            {submitting ? '处理中…' : '拆解'}
+          </button>
+          <button type="button" style={buttonStyle} disabled={props.busy || submitting} onClick={props.onCancel}>
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
  * 任务编辑弹框（问题 4：拆解出的任务增加提示词、切换模型、选择技能/MCP）。
  *
  * 保存时带上 `expectedRevision`：宿主用乐观锁校验，冲突时返回可读原因
@@ -1993,6 +2572,8 @@ export function TaskEditDialog(props: {
   skillOptions: DshSkillOption[]
   /** 宿主真实注册的 MCP server（问题 4）。 */
   mcpServers: string[]
+  /** 技能/MCP 分组（2026-11-03 用户诉求：选分组自动带出技能/MCP）。 */
+  skillGroups: SkillMcpGroup[]
   /** 问题 3：dsh 真实预设清单（任务级 preset；value 用 preset id）。 */
   presets: DshPresetOption[]
   busy: boolean
@@ -2012,6 +2593,12 @@ export function TaskEditDialog(props: {
   )
   const [skills, setSkills] = useState<string[]>(t.frozenConfig.skills)
   const [mcp, setMcp] = useState<string[]>(t.frozenConfig.mcp)
+  // 2026-10-29（诉求 4）：工作流技能（必须在 skills 内）。
+  const [workflow, setWorkflow] = useState<string>(
+    t.frozenConfig.workflow && t.frozenConfig.skills.includes(t.frozenConfig.workflow)
+      ? t.frozenConfig.workflow
+      : '',
+  )
   // 问题 3：任务级预设（preset）。
   const [preset, setPreset] = useState<string>(t.frozenConfig.preset ?? '')
   // 问题 1：执行预算（留空 = 不限制/沿用默认；整体替换冻结配置，留空即移除该上限）。
@@ -2103,6 +2690,34 @@ export function TaskEditDialog(props: {
           </div>
         )}
 
+        {/* 2026-11-03 用户诉求：技能/MCP 分组 —— 选中自动带出组内技能与 MCP（可继续微调）。 */}
+        {props.skillGroups.length > 0 && (
+          <>
+            <label style={fieldLabelStyle}>技能/MCP 分组（选中自动带出组内技能与 MCP，可继续微调）</label>
+            <select
+              style={fieldStyle}
+              value=""
+              onChange={e => {
+                const gid = e.target.value
+                if (!gid) return
+                const g = props.skillGroups.find(x => x.id === gid)
+                if (!g) return
+                setSkills([...new Set(g.skills)])
+                setMcp([...new Set(g.mcp)])
+                // 工作流必须留在技能清单内：带出后若原工作流不在新技能里则清空。
+                setWorkflow(prev => (g.skills.includes(prev) ? prev : ''))
+              }}
+            >
+              <option value="">— 选择分组带出技能/MCP —</option>
+              {props.skillGroups.map(g => (
+                <option key={g.id} value={g.id}>
+                  {g.name}（技能 {g.skills.length} · MCP {g.mcp.length}）
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+
         <label style={fieldLabelStyle}>技能（写进冻结配置，当前可选 {dedupeOptions(props.skillOptions.map(s => ({ value: s.name, label: s.name }))).length} 项）</label>
         <MultiSelect
           options={props.skillOptions.map(s => ({
@@ -2111,10 +2726,41 @@ export function TaskEditDialog(props: {
             hint: `${s.source}${s.modelInvocable ? ' · 模型可调用' : ''}`,
           }))}
           value={skills}
-          onChange={setSkills}
+          onChange={next => {
+            setSkills(next)
+            // 工作流必须留在技能清单内：取消勾选即清空（避免悬空配置）。
+            setWorkflow(prev => (next.includes(prev) ? prev : ''))
+          }}
           placeholder="未选择技能"
           searchPlaceholder="按技能名刷选…"
         />
+
+        {/* 2026-10-29（诉求 4，第二轮修正）：工作流从**全部技能**中选择；
+            选中时自动并入技能清单（宿主校验 workflow ∈ skills）。 */}
+        <label style={fieldLabelStyle}>工作流（从全部已安装技能中选择；选中即强制按该技能的流程逐步执行，禁止跳步）</label>
+        <select
+          style={fieldStyle}
+          value={workflow}
+          onChange={e => {
+            const next = e.target.value
+            setWorkflow(next)
+            if (next) setSkills(prev => (prev.includes(next) ? prev : [...prev, next]))
+          }}
+          disabled={props.skillOptions.length === 0}
+        >
+          <option value="">— 不启用工作流（自由执行）—</option>
+          {props.skillOptions.map(s => (
+            <option key={s.name} value={s.name}>
+              {s.name}
+              {skills.includes(s.name) ? '（已在技能中）' : ''}
+            </option>
+          ))}
+        </select>
+        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+          {props.skillOptions.length === 0
+            ? '宿主未返回技能清单：可到「执行配置」点「重新采集目录」。'
+            : '选中后会自动加入「技能」：派发时读取该技能正文并解析步骤，要求子代理逐步输出「✅ 步骤 i/N」；跳步会被判为不达标。'}
+        </div>
 
         <label style={fieldLabelStyle}>MCP（写进冻结配置，当前可选 {props.mcpServers.length} 项）</label>
         <MultiSelect
@@ -2175,6 +2821,8 @@ export function TaskEditDialog(props: {
                 modelProvider: modelRoute?.provider ?? '',
                 skills,
                 mcp,
+                // 2026-10-29（诉求 4）：工作流（选"不启用"传空串，整体替换后清空）。
+                workflow: skills.includes(workflow) ? workflow : '',
                 // 问题 3：预设（选"不指定"传空串，整体替换后清空）。
                 preset: preset.trim(),
                 ...(maxDepth.trim() !== '' && Number.isFinite(depthNum) && depthNum >= 0

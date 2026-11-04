@@ -87,6 +87,17 @@ export interface TargetFill {
   title: string
   description: string
   execPrompt: string
+  /**
+   * 工作目录（2026-11-03 问题 3）：任务中心配置的目录随「选为目标」带入执行配置。
+   * 空串 = 目标上未配置（执行配置保持"跟随任务/需求"语义，不乱填）。
+   */
+  workspace: string
+  /**
+   * 需求级提示词（2026-11-03 问题 1/3）：领取入池或任务中心「编辑」填的提示词，
+   * 随「选为目标」带入执行配置独立展示（**不**拼进 execPrompt：宿主派发时会把
+   * 需求级提示词自动拼在任务提示词之前，复制进去会发两份）。
+   */
+  reqPrompt: string
 }
 
 /**
@@ -201,7 +212,11 @@ export function buildTargetFill(target: RequirementSummary | undefined | null): 
   const execPrompt = body.length > 0
     ? `${prefix}\n\n${composeTargetDescription(target, Math.max(1, TARGET_TEXT_LIMIT - prefix.length - 2))}`
     : prefix
-  return { title, description, execPrompt }
+  // 工作目录与需求级提示词随目标带出（2026-11-03 问题 3/1）：
+  // 需求上没有时落空串（= 不覆盖表单已有的值语义由调用方决定，见 ExecutionPanel 的填充 effect）。
+  const workspace = (target.workspace ?? '').trim()
+  const reqPrompt = (target.prompt ?? '').trim()
+  return { title, description, execPrompt, workspace, reqPrompt }
 }
 
 /**

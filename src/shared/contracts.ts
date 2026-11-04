@@ -146,6 +146,43 @@ export interface FrozenConfig {
    * 单次模型响应输出 token 上限（问题 1：0/缺省 = 不设置）。任务级可覆盖。
    */
   maxTokens?: number
+  /**
+   * 工作流技能名（2026-10-29 用户诉求 4：**工作流从技能中选择**）。
+   *
+   * 语义：该任务的执行流程由这个技能定义，派发时插件会
+   *   ① 把技能正文整篇下发；② 从正文解析有序步骤，生成"禁止跳步"的逐步勾选纪律；
+   *   ③ 落定后按 `✅ 步骤 i/N` 标记验收，未逐条报告则收口为「待人工确认」。
+   *
+   * 取值必须是 `skills` 之一（工作流就是一种技能）。空串/缺省 = 不启用工作流强制。
+   */
+  workflow?: string
+}
+
+// ───────────────────────── 技能/MCP 分组（2026-11-03 用户诉求） ─────────────────────────
+
+/**
+ * 技能/MCP 分组：把一组常用技能 + MCP server 打包成一个可复用的"能力包"。
+ *
+ * 存在的理由：执行配置页与任务编辑弹框各自都要勾一遍技能/MCP，换一台机器/换个人
+ * 就得重新勾。分组落 `skill-groups.json`（宿主半 `SkillGroupStore`，与 roles.json
+ * 同一 JsonStore 纪律），在执行配置页/任务编辑弹框选中分组后**自动带出**其技能与 MCP
+ * （带出后仍可微调，分组只是填充器，不是绑定）。
+ */
+export interface SkillMcpGroup {
+  /** 分组 id（创建时生成；保存时同 id 覆盖）。 */
+  id: string
+  /** 分组名（必填，同名保存=覆盖该分组，避免出现两个"前端基础包"）。 */
+  name: string
+  /** 可选说明。 */
+  description?: string
+  /** 该组包含的技能名（取值域 = DshSkillOption.name）。 */
+  skills: string[]
+  /** 该组包含的 MCP server 名（取值域 = 宿主真实注册的 mcpServers）。 */
+  mcp: string[]
+  /** 创建时刻（ISO）。 */
+  createdAt: string
+  /** 最近更新时刻（ISO）。 */
+  updatedAt: string
 }
 
 // ───────────────────────── DSH 真实能力枚举（问题 4/5/6/7/9/11） ─────────────────────────
@@ -241,6 +278,19 @@ export interface DispatchDraft {
   /** 任务描述（问题 6；写入看板任务的 `description`）。 */
   description?: string
   prompt: string
+  /**
+   * 需求级提示词**本次覆盖**（2026-11-03 问题 1/3）。
+   *
+   * 缺省时宿主实时读看板 `Requirement.prompt`（"用户改了需求提示词后未派发任务立刻采用新值"）。
+   * 「选为目标」把任务中心的需求级提示词带进执行配置后，用户可能就地微调 —— 那份微调
+   * 只该影响**本次**派发，故走本字段覆盖而非回写看板（不制造两份真相）。
+   */
+  requirementPrompt?: string
+  /**
+   * 执行时机（2026-11-03 问题 4）：'now'/缺省 = 立刻派发；mode='at' = 到 `dueAt` 才派发。
+   * `dueAt` 为 ISO 8601，精确到分；校验在宿主（`shared/schedule.ts#validateSchedule` 同口径）。
+   */
+  schedule?: { mode: 'now' | 'at'; dueAt?: string }
   frozenConfig: FrozenConfig
   permission: RolePermission
   /**
@@ -296,6 +346,31 @@ export interface DispatchActionResult {
   createdTask?: boolean
   /** 实际生效的工作目录（绝对路径）。 */
   workspace?: string
+  /** true = 已登记为定时执行（问题 4）：到 `scheduledAt` 才真正派发，此刻不建任务。 */
+  scheduled?: boolean
+  /** 定时派发的到点时刻（ISO 8601，精确到分；仅 scheduled=true 时有）。 */
+  scheduledAt?: string
+}
+
+/**
+ * 定时调度条目的 UI 视图（2026-11-03 问题 3：任务中心要能看到/修改定时条目）。
+ *
+ * 与宿主 `ScheduledEntry` 落盘形状字段对齐；`requirementKey` 由宿主从 payload 归一
+ * （dispatch 取 targetWorkItem，chain 取 requirementKey），供需求行"定时待执行"派生。
+ */
+export interface ScheduleEntryView {
+  /** 条目 id（同 id 重登记 = 覆盖）。 */
+  id: string
+  /** 到点时刻（ISO 8601，精确到分）。 */
+  dueAt: string
+  /** 'dispatch' = 到点发起一次执行；'chain' = 到点开始编排某需求的子 Agent 链。 */
+  kind: 'dispatch' | 'chain'
+  /** 创建时刻（ISO）。 */
+  createdAt: string
+  /** 人类可读备注。 */
+  note?: string
+  /** 关联需求键（`{id}@{collection}`）；无法归一时省略。 */
+  requirementKey?: string
 }
 
 /** 执行面板动作（由 HostBridge 在宿主半接线，客户端半仅消费）。 */
@@ -321,6 +396,15 @@ export interface ExecutionActions {
    * （先 POST catalog-refresh 重采，再取面板数据）。
    */
   refreshCatalog?: () => Promise<void>
+  /**
+   * 发起执行**成功**后的导航钩子（2026-11-03 用户诉求 1）。
+   *
+   * 执行面板自身不知道外层 Tab 结构（中央工作台 TabKey / 右栏 SideTab 两套），
+   * 由接线层（slots.tsx / SidePanel.tsx）注入"切到任务中心"的动作。
+   * 只在**立刻执行**成功（看板任务已创建）时被调用——定时执行只登记条目、
+   * 任务中心看不到新任务，留在执行页展示"到点自动派发"的成功消息更有用。
+   */
+  onDispatched?: () => void
 }
 
 /** 面板静态数据（由 HostBridge 从宿主/本地注入）。 */
@@ -345,6 +429,13 @@ export interface ExecutionPanelData {
   skills: string[]
   /** 真实技能清单（问题 7 / 11）。 */
   skillOptions: DshSkillOption[]
+  /**
+   * 技能/MCP 分组清单（2026-11-03 用户诉求，宿主 `skill-groups.json`）。
+   *
+   * 执行配置页与任务编辑弹框据此渲染"分组"下拉，选中后自动带出组内技能/MCP。
+   * 缺省（宿主未接线/读盘失败）= 不渲染分组选择器（能力降级，不阻断主流程）。
+   */
+  skillGroups?: SkillMcpGroup[]
   /** 标签候选（datalist）。 */
   tagSuggestions: string[]
   /** 可切换的集合清单（FR-025，来自 `config.collections`）。 */
@@ -391,13 +482,37 @@ export interface ExecutionPanelData {
    * 缺省（未接线）时面板不做任何编排能力提示。
    */
   orchestration?: {
-    /** `subagents.start` 可用 ⇒ 可以派发子智能体。 */
+    /** 派发入口可用（`startActivation` 或旧版 `start`）⇒ 可以派发子智能体。 */
     available: boolean
     /** 宿主真实注册的 provider 名（角色 `provider` 下拉的取值域；老版本服务可能为空）。 */
     providers: string[]
     /** 不可用/降级原因。 */
     reason?: string
+    /**
+     * 实际生效的派发 API（2026-10-29 诊断字段）。
+     *
+     * `startActivation` = 现行宿主（0.2.1+，`packages/subagent/subagent/src/index.ts:269`）；
+     * `start` = 旧宿主（≤0.2.0）。面板据此显示"派发通道"，让"到底走哪条路"可见，
+     * 而不是只看到一个 available 布尔值。
+     */
+    api?: 'startActivation' | 'start'
+    /**
+     * true = **当前没有活跃会话**，但派发时会由宿主 `sessionController` 现场准备一个
+     * （2026-11-03）。面板据此显示"无活跃会话，派发时自动准备"，而不是把能力判成不可用。
+     *
+     * 为什么不是"不可用"：定时执行到点那一刻用户会话通常早已关闭，能否派发不该取决于
+     * 「此刻是否开着聊天窗口」——`available:true` + 本标记才是如实描述。
+     */
+    parentOnDemand?: boolean
   }
+  /**
+   * **宿主半插件的加载时刻**（ISO，2026-10-29 新增）。
+   *
+   * 为什么需要它：宿主半是 node 模块，**只在 dsh 启动时加载一次**——重新构建 `lib/` 后
+   * 不重启 dsh，界面仍会跑旧代码，而报错文案看起来完好无损（用户无法判断"改了没生效"）。
+   * 面板显示这个时间，配合构建产物时间就能一眼判定"要不要重启"。
+   */
+  pluginLoadedAt?: string
   /**
    * 当前目标需求的**完整快照**（US3 / FR-009），带 `System.Description` 转出的正文。
    *
@@ -424,6 +539,14 @@ export interface ExecutionFormState {
   title: string
   description: string
   execPrompt: string
+  /**
+   * 需求级提示词（2026-11-03 问题 1/3：「选为目标」从任务中心带入）。
+   *
+   * 与 `execPrompt` 分开放：宿主派发时会把需求级提示词拼在任务提示词**之前**，
+   * 复制进 execPrompt 会让同一段话发两份。这里带入是为了**可见与可微调**，
+   * 派发时以 `DispatchDraft.requirementPrompt` 作本次覆盖下发。
+   */
+  reqPrompt: string
   tags: string[]
   workspace: string
   permission: RolePermission
@@ -441,7 +564,18 @@ export interface ExecutionFormState {
   preset: string
   selectedMcp: string[]
   selectedSkills: string[]
+  /**
+   * 工作流技能名（2026-10-29 用户诉求 4）。
+   *
+   * 取值来自「技能」下拉（工作流就是一种技能）：选中后派发时按该技能正文的步骤
+   * 强制逐步执行，禁止跳步；空串 = 不启用工作流。
+   */
+  workflow: string
   roleName: string
+  /** 执行时机（2026-11-03 问题 4）：'now' = 立刻（默认）；'at' = 定时。 */
+  scheduleMode: 'now' | 'at'
+  /** 定时执行时刻（`datetime-local` 值，精确到分；仅 scheduleMode='at' 有效）。 */
+  scheduleAtLocal: string
 }
 
 /**
@@ -491,6 +625,12 @@ export interface HostBridge {
    * `force=true` 时显式确认后删除。
    */
   deleteRole(id: string, force?: boolean): Promise<{ ok: boolean; reason?: string; references?: string[] }>
+  /** 技能/MCP 分组清单（2026-11-03 用户诉求）。 */
+  listSkillGroups(): Promise<SkillMcpGroup[]>
+  /** 保存/更新技能/MCP 分组（同名=覆盖）。 */
+  saveSkillGroup(group: SkillMcpGroup): Promise<{ ok: boolean; reason?: string }>
+  /** 删除技能/MCP 分组。 */
+  deleteSkillGroup(id: string): Promise<{ ok: boolean; reason?: string }>
   /** 看板快照（US3 任务中心 / US6 恢复）。 */
   getBoard(): Promise<BoardSnapshotView>
   /** 领取需求入本地池（US2 / T036，幂等 S-01）+ 打 `dsh` 标签（T048，幂等 S-08）。 */
@@ -503,6 +643,25 @@ export interface HostBridge {
   decomposeRequirement(
     requirementId: string,
   ): Promise<{ ok: boolean; taskIds?: string[]; created?: number; skipped?: number; createdRoles?: string[]; reason?: string }>
+  /**
+   * 开始编排（2026-11-03 问题 4/5）：'now' = 立刻按依赖顺序启动子 Agent 链
+   * （上个任务完成才编排下个）；'at' = 登记定时（精确到分，持久化 + 重启补跑）。
+   */
+  orchestrationStart(input: {
+    requirementKey: string
+    mode: 'now' | 'at'
+    dueAt?: string
+    sequential?: boolean
+  }): Promise<{ ok: boolean; reason?: string; scheduledAt?: string }>
+  /** 定时执行条目清单（问题 4/5；2026-11-03 问题 3 改为类型化视图）。 */
+  listSchedules(): Promise<{ ok: boolean; entries?: ScheduleEntryView[]; reason?: string }>
+  /** 取消一条定时执行。 */
+  cancelSchedule(id: string): Promise<{ ok: boolean; reason?: string }>
+  /**
+   * 修改一条定时执行的到点时刻（2026-11-03 问题 3：用户要求"有地方可以修改执行时间"）。
+   * 同 id 重登记语义（覆盖旧条目并重新武装）；`dueAt` 为 ISO 8601，必须晚于当前时间。
+   */
+  updateSchedule(id: string, dueAt: string): Promise<{ ok: boolean; reason?: string; scheduledAt?: string }>
   /** 还原已领取需求回需求池（2026-09-20 问题 7）：仅当其任务全部已取消时允许。 */
   restoreRequirement(requirementKey: string): Promise<RestoreResult>
   /** 实时重取需求工作项，把详细信息/需求分析/数据结构/需求配置回写到看板（问题 11）。 */
@@ -625,6 +784,12 @@ export const TFS_ROUTES = {
   roleSave: '/tfs-requirment/role-save',
   /** POST 删除角色（US5；被引用时需 force）。 */
   roleDelete: '/tfs-requirment/role-delete',
+  /** GET 技能/MCP 分组清单（2026-11-03 用户诉求）。 */
+  skillGroups: '/tfs-requirment/skill-groups',
+  /** POST 保存/更新技能/MCP 分组。 */
+  skillGroupSave: '/tfs-requirment/skill-group-save',
+  /** POST 删除技能/MCP 分组。 */
+  skillGroupDelete: '/tfs-requirment/skill-group-delete',
   /** GET 看板快照（US3 任务中心 / US6 恢复）。 */
   board: '/tfs-requirment/board',
   /** POST 领取需求入本地池（US2 / T036）+ 打 dsh 标签（T048）。 */
@@ -702,6 +867,18 @@ export const TFS_ROUTES = {
    * provider 不支持 / 宿主不可用 ⇒ 返回 `mode:'off'` + 可读 `reason`（fail-loud，不静默）。
    */
   orchestratorEnsure: '/tfs-requirment/orchestrator-ensure',
+  /**
+   * POST 开始编排（2026-11-03 问题 4/5）。
+   * body：{ requirementKey, mode: 'now' | 'at', dueAt?, sequential? }。
+   * 'at' = 登记定时（精确到分，持久化 + 重启补跑）；'now' = 立刻按依赖顺序启动子 Agent 链。
+   */
+  orchestrationStart: '/tfs-requirment/orchestration-start',
+  /** GET 定时执行条目清单（问题 4/5）。 */
+  schedules: '/tfs-requirment/schedules',
+  /** POST 取消一条定时执行（body：{ id }）。 */
+  scheduleCancel: '/tfs-requirment/schedule-cancel',
+  /** POST 修改定时执行的到点时刻（body：{ id, dueAt }，2026-11-03 问题 3）。 */
+  scheduleUpdate: '/tfs-requirment/schedule-update',
 } as const
 
 /** spec 010：创建/取回编排主 agent 会话的入参。 */
@@ -866,6 +1043,8 @@ export interface TaskOrchestrationView {
   summary?: string
   /** 归纳状态。 */
   summaryState?: TaskSummaryState
+  /** 主 agent 扫尾轮数（2026-11-03 问题 7；超上限转主 agent 亲做）。 */
+  sweepRound?: number
 }
 
 /**
@@ -1641,6 +1820,11 @@ export interface UpdateTaskInput {
   skills?: string[]
   /** MCP（写进 `frozenConfig.mcp`，整体替换）。 */
   mcp?: string[]
+  /**
+   * 工作流技能名（2026-10-29 用户诉求 4；写进 `frozenConfig.workflow`，整体替换）。
+   * 传空串表示清空工作流（不启用逐步强制）。取值必须在 `skills` 内（宿主会校验）。
+   */
+  workflow?: string
   /**
    * agent preset id（问题 3：未执行任务可改预设）。
    * 写进 `frozenConfig.preset`；传空串表示清空（回落为沿用角色定义）。

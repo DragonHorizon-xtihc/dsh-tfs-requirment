@@ -230,7 +230,8 @@ async function main() {
   // 安全断言：面板数据绝不能带凭据。`ProfileView` 结构上没有 `pat` 字段，
   // 这里做运行期复核（可证伪，不是"恒真"检查）：不得出现任何名为 pat 的键，
   // 且地址里不得带 userinfo（`@`）或查询串 —— 带凭据的 URL 必然违反其中一条。
-  const hasPatKey = Object.keys(before).some(k => /pat/i.test(k))
+  // ⚠️ 用 \bpat\b 而非 /pat/i：后者会把 dispatchConcurrency（dis-pat-ch…）这类普通键误判成凭据泄露。
+  const hasPatKey = Object.keys(before).some(k => /\bpat\b/i.test(k) || /personalaccesstoken|access[_-]?token/i.test(k))
   const cleanUrl =
     typeof baseUrl === 'string' && !baseUrl.includes('@') && !baseUrl.includes('?') && baseUrl.length < 200
   check(
