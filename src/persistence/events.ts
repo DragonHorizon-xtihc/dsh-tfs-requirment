@@ -4,7 +4,7 @@
  * 所有状态变更与审计事件以行式 JSON 追加到 `events.jsonl`；**绝不**修改或删除已有行
  * （审计剔除凭据在写入侧保证，见 write-guard/audit.ts）。
  *
- * @module dsh-tfs-requirment/persistence/events
+ * @module @deepseek-ai/dsh-tfs-requirment/persistence/events
  */
 
 import { dirname, join } from 'node:path'

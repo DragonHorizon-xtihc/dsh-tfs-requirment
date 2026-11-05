@@ -8,7 +8,7 @@
  *
  * 本模块为纯字符串处理：无 node 依赖、无 @deepseek-ai 依赖，客户端半也可安全引用。
  *
- * @module dsh-tfs-requirment/shared/redact
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/redact
  */
 /**
  * 擦除可能出现在文本里的凭据片段（T033 / CHK002）。

@@ -16,7 +16,7 @@
  *   - 解码容错：任何非本模块编码的值（含历史裸 id）都安全返回 undefined 或走旧值兼容；
  *   - 不依赖 node / React，可在客户端半直接 import。
  *
- * @module dsh-tfs-requirment/shared/model-route
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/model-route
  */
 
 import type { DshModelOption } from './contracts.js'

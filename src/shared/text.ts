@@ -15,7 +15,7 @@
  * 放 `src/shared` 还带来一个硬性收益：客户端半**没有 React 测试库**（`tests/` 全为 `.ts`），
  * 逻辑留在组件里就等于不可测；下沉后可由单测直接覆盖（项目纪律：可测逻辑不留组件内）。
  *
- * @module dsh-tfs-requirment/shared/text
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/text
  */
 
 /**

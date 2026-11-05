@@ -8,7 +8,7 @@
  *
  * 本模块不依赖任何宿主 API，纯逻辑可单测（基建待 T011 adapter 接入时再调 `getCredential`）。
  *
- * @module dsh-tfs-requirment/profile/store
+ * @module @deepseek-ai/dsh-tfs-requirment/profile/store
  */
 
 import { randomBytes } from 'node:crypto'

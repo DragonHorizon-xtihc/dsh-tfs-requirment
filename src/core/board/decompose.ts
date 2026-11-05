@@ -6,7 +6,7 @@
  * 经 `orchestration/role-match.ts` 完成，本函数只按传入的阶段角色映射出草稿，保持纯逻辑、
  * 可单测）。草稿落库经 `Board.addTask`。
  *
- * @module dsh-tfs-requirment/core/board/decompose
+ * @module @deepseek-ai/dsh-tfs-requirment/core/board/decompose
  */
 
 import type { Requirement } from '../../tfs/types.js'

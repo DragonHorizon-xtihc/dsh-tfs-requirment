@@ -14,7 +14,7 @@
  * 本文件是**纯类型**（`type`-only 导出也行，但这里用普通 interface/type 以便值语义兼容），
  * 不 export 任何运行时值，避免被错打包进任一端。
  *
- * @module dsh-tfs-requirment/shared/contracts
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/contracts
  */
 import type { RequirementBrief } from './brief.js';
 export type { RequirementBrief } from './brief.js';
@@ -783,71 +783,71 @@ export interface HostBridge {
  */
 export declare const TFS_ROUTES: {
     /** GET 取面板静态数据。 */
-    readonly panelData: "/tfs-requirment/panel-data";
+    readonly panelData: '/tfs-requirment/panel-data';
     /** POST 确认回写（tag/comment/state）。 */
-    readonly confirmWrite: "/tfs-requirment/confirm-write";
+    readonly confirmWrite: '/tfs-requirment/confirm-write';
     /** POST 发起执行（按角色派发 subagent）。 */
-    readonly dispatch: "/tfs-requirment/dispatch";
+    readonly dispatch: '/tfs-requirment/dispatch';
     /**
      * POST 需求池列表（US2）。
      *
      * 用 POST 而非 GET：筛选条件含 projects/types/states/assignedTo 等数组与关键字，放在 query
      * string 上易超长且需重复转义；请求体承载 {@link RequirementFilter}，返回 {@link RequirementListResult}。
      */
-    readonly requirements: "/tfs-requirment/requirements";
+    readonly requirements: '/tfs-requirment/requirements';
     /** GET 需求筛选可选项（问题 3：项目/类型/状态/指派人；命中宿主进程内缓存则不重采）。 */
-    readonly queryOptions: "/tfs-requirment/query-options";
+    readonly queryOptions: '/tfs-requirment/query-options';
     /**
      * POST 强制重采需求筛选可选项（绕过缓存）。
      *
      * 用 POST 而非 GET：它有**副作用**（丢弃缓存并重新拉取 TFS 元数据），
      * 放在 GET 上会让任何预取/重试链路意外触发整轮元数据采集。
      */
-    readonly queryOptionsRefresh: "/tfs-requirment/query-options-refresh";
+    readonly queryOptionsRefresh: '/tfs-requirment/query-options-refresh';
     /** GET 角色清单（US5）。 */
-    readonly roles: "/tfs-requirment/roles";
+    readonly roles: '/tfs-requirment/roles';
     /** POST 保存/更新角色（US5）。 */
-    readonly roleSave: "/tfs-requirment/role-save";
+    readonly roleSave: '/tfs-requirment/role-save';
     /** POST 删除角色（US5；被引用时需 force）。 */
-    readonly roleDelete: "/tfs-requirment/role-delete";
+    readonly roleDelete: '/tfs-requirment/role-delete';
     /** GET 技能/MCP 分组清单（2026-11-03 用户诉求）。 */
-    readonly skillGroups: "/tfs-requirment/skill-groups";
+    readonly skillGroups: '/tfs-requirment/skill-groups';
     /** POST 保存/更新技能/MCP 分组。 */
-    readonly skillGroupSave: "/tfs-requirment/skill-group-save";
+    readonly skillGroupSave: '/tfs-requirment/skill-group-save';
     /** POST 删除技能/MCP 分组。 */
-    readonly skillGroupDelete: "/tfs-requirment/skill-group-delete";
+    readonly skillGroupDelete: '/tfs-requirment/skill-group-delete';
     /** GET 看板快照（US3 任务中心 / US6 恢复）。 */
-    readonly board: "/tfs-requirment/board";
+    readonly board: '/tfs-requirment/board';
     /** POST 领取需求入本地池（US2 / T036）+ 打 dsh 标签（T048）。 */
-    readonly claim: "/tfs-requirment/claim";
+    readonly claim: '/tfs-requirment/claim';
     /** POST 拆解需求为任务（US3 / T041）。 */
-    readonly decompose: "/tfs-requirment/decompose";
+    readonly decompose: '/tfs-requirment/decompose';
     /** POST 指派任务角色（US3 / T042）。 */
-    readonly taskAssign: "/tfs-requirment/task-assign";
+    readonly taskAssign: '/tfs-requirment/task-assign';
     /** POST 任务状态操作 启动/完成/重试/取消（US3 / T043）。 */
-    readonly taskState: "/tfs-requirment/task-state";
+    readonly taskState: '/tfs-requirment/task-state';
     /** GET 连通性自检（US1 / T029 测试连接）。 */
-    readonly health: "/tfs-requirment/health";
+    readonly health: '/tfs-requirment/health';
     /** GET 审计状态（T063）。 */
-    readonly audit: "/tfs-requirment/audit";
+    readonly audit: '/tfs-requirment/audit';
     /** POST 执行审计滚动归档（T063）。 */
-    readonly auditArchive: "/tfs-requirment/audit-archive";
+    readonly auditArchive: '/tfs-requirment/audit-archive';
     /** POST 切换默认集合（T030 / FR-003）。 */
-    readonly collection: "/tfs-requirment/collection";
+    readonly collection: '/tfs-requirment/collection';
     /** GET 连接档案清单（T031；不含 PAT）。 */
-    readonly profiles: "/tfs-requirment/profiles";
+    readonly profiles: '/tfs-requirment/profiles';
     /** POST 保存/更新连接档案（T031）。 */
-    readonly profileSave: "/tfs-requirment/profile-save";
+    readonly profileSave: '/tfs-requirment/profile-save';
     /** POST 删除连接档案（T031）。 */
-    readonly profileDelete: "/tfs-requirment/profile-delete";
+    readonly profileDelete: '/tfs-requirment/profile-delete';
     /** POST 设为活动档案（T031）。 */
-    readonly profileActivate: "/tfs-requirment/profile-activate";
+    readonly profileActivate: '/tfs-requirment/profile-activate';
     /** GET MCP 接入模板 + 实例诊断（T028b）。 */
-    readonly mcpInstance: "/tfs-requirment/mcp-instance";
+    readonly mcpInstance: '/tfs-requirment/mcp-instance';
     /** POST 写出 MCP 启动环境文件（T028b）。 */
-    readonly mcpEnvFile: "/tfs-requirment/mcp-env-file";
+    readonly mcpEnvFile: '/tfs-requirment/mcp-env-file';
     /** GET 本插件的能力目录（问题 8 / 12）。 */
-    readonly tfsTools: "/tfs-requirment/tfs-tools";
+    readonly tfsTools: '/tfs-requirment/tfs-tools';
     /**
      * POST 强制重采 DSH 能力目录（模型 / 技能 / 预设 / 工作区 / provider / MCP）。
      *
@@ -856,55 +856,55 @@ export declare const TFS_ROUTES: {
      * 首次采集的空/旧快照 —— 表现为"下拉里没有我刚配的模型"，且用户无法自救。
      * 该路由让"执行配置"标签页的刷新按钮真正触发重采，而不是只重读同一份内存快照。
      */
-    readonly catalogRefresh: "/tfs-requirment/catalog-refresh";
+    readonly catalogRefresh: '/tfs-requirment/catalog-refresh';
     /** GET 读本地落盘的需求池可选项（问题 1；无缓存返回 data:null）。 */
-    readonly queryOptionsLoad: "/tfs-requirment/query-options-load";
+    readonly queryOptionsLoad: '/tfs-requirment/query-options-load';
     /** POST 强制重采需求池可选项并落盘覆盖（问题 1「采集可选项」）。 */
-    readonly queryOptionsCollect: "/tfs-requirment/query-options-collect";
+    readonly queryOptionsCollect: '/tfs-requirment/query-options-collect';
     /** GET/POST UI 状态（筛选/每页条数，问题 2/4/6）。 */
-    readonly uiState: "/tfs-requirment/ui-state";
+    readonly uiState: '/tfs-requirment/ui-state';
     /** POST 还原已领取需求回需求池（问题 7）。 */
-    readonly requirementRestore: "/tfs-requirment/requirement-restore";
+    readonly requirementRestore: '/tfs-requirment/requirement-restore';
     /** POST 实时重取需求四段描述并回写看板（问题 11）。 */
-    readonly requirementEnrich: "/tfs-requirment/requirement-enrich";
+    readonly requirementEnrich: '/tfs-requirment/requirement-enrich';
     /** POST 删除已取消任务（问题 8，批量）。 */
-    readonly taskDelete: "/tfs-requirment/task-delete";
+    readonly taskDelete: '/tfs-requirment/task-delete';
     /** POST 编辑已领取需求本地字段（问题 3：提示词 / 工作目录）。 */
-    readonly requirementUpdate: "/tfs-requirment/requirement-update";
+    readonly requirementUpdate: '/tfs-requirment/requirement-update';
     /** POST 设置需求级执行状态（问题 5：确认完成 / 取消完成）。 */
-    readonly requirementExecState: "/tfs-requirment/requirement-exec-state";
+    readonly requirementExecState: '/tfs-requirment/requirement-exec-state';
     /** POST 编辑任务字段（问题 4：提示词 / 模型 / 技能 / MCP / 工作目录）。 */
-    readonly taskUpdate: "/tfs-requirment/task-update";
+    readonly taskUpdate: '/tfs-requirment/task-update';
     /** GET 任务执行过程轨迹（spec 006 US2；query：taskId、attempt?）。 */
-    readonly taskTrace: "/tfs-requirment/task-trace";
+    readonly taskTrace: '/tfs-requirment/task-trace';
     /** POST 对任务追问 / 补充指令（spec 006 US3；body：FollowUpTaskInput）。 */
-    readonly taskFollowUp: "/tfs-requirment/task-follow-up";
+    readonly taskFollowUp: '/tfs-requirment/task-follow-up';
     /**
      * POST 需求完成自动回写（问题 4；body：{ requirementKey, force? }）。
      *
      * 全部任务完成时宿主会自动调用一次；此路由用于：① 自动回写关闭时的"手动回写"入口；
      * ② 部分失败后的"重新回写"（幂等，已成功的项跳过）。GET（query requirementKey）只读回写报告。
      */
-    readonly requirementWriteBack: "/tfs-requirment/requirement-write-back";
+    readonly requirementWriteBack: '/tfs-requirment/requirement-write-back';
     /**
      * POST 确保需求有编排主 agent 会话（spec 010 US1；body：{ requirementKey }）。
      *
      * 幂等：已存在 continuable 编排会话时直接返回既有上下文，不重复创建。
      * provider 不支持 / 宿主不可用 ⇒ 返回 `mode:'off'` + 可读 `reason`（fail-loud，不静默）。
      */
-    readonly orchestratorEnsure: "/tfs-requirment/orchestrator-ensure";
+    readonly orchestratorEnsure: '/tfs-requirment/orchestrator-ensure';
     /**
      * POST 开始编排（2026-11-03 问题 4/5）。
      * body：{ requirementKey, mode: 'now' | 'at', dueAt?, sequential? }。
      * 'at' = 登记定时（精确到分，持久化 + 重启补跑）；'now' = 立刻按依赖顺序启动子 Agent 链。
      */
-    readonly orchestrationStart: "/tfs-requirment/orchestration-start";
+    readonly orchestrationStart: '/tfs-requirment/orchestration-start';
     /** GET 定时执行条目清单（问题 4/5）。 */
-    readonly schedules: "/tfs-requirment/schedules";
+    readonly schedules: '/tfs-requirment/schedules';
     /** POST 取消一条定时执行（body：{ id }）。 */
-    readonly scheduleCancel: "/tfs-requirment/schedule-cancel";
+    readonly scheduleCancel: '/tfs-requirment/schedule-cancel';
     /** POST 修改定时执行的到点时刻（body：{ id, dueAt }，2026-11-03 问题 3）。 */
-    readonly scheduleUpdate: "/tfs-requirment/schedule-update";
+    readonly scheduleUpdate: '/tfs-requirment/schedule-update';
 };
 /** spec 010：创建/取回编排主 agent 会话的入参。 */
 export interface OrchestratorEnsureInput {

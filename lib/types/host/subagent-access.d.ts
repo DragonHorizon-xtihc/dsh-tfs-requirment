@@ -29,7 +29,7 @@
  * 因此本模块**按能力探测**：`startActivation` 优先，`start` 作为旧宿主兼容，
  * 两者都没有才判不可用 —— 这样"面板能派发"与"运行期真能派发"永远同源，不会漂移。
  *
- * @module dsh-tfs-requirment/host/subagent-access
+ * @module @deepseek-ai/dsh-tfs-requirment/host/subagent-access
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';

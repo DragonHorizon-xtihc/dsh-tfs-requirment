@@ -22,7 +22,7 @@
  * 组装与解析是**纯逻辑**，且宿主半（组装 prompt / 落盘）与客户端半（面板展示简报）
  * 都要用同一口径。组件层没有渲染测试手段，规则写进 JSX 就只能靠人眼保证（项目既有纪律）。
  *
- * @module dsh-tfs-requirment/shared/brief
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/brief
  */
 /** 单条已完成任务的结论。 */
 export interface BriefConclusion {

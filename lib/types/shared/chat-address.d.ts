@@ -18,7 +18,7 @@
  * 也没有 `ui-subagent`。故本模块按已核实的格式自行实现（纯字符串处理，可单测），
  * 与宿主实现**格式对齐**而非共享代码。
  *
- * @module dsh-tfs-requirment/shared/chat-address
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/chat-address
  */
 /** 宿主侧边对话的资源协议前缀（`ui-subagent/.../sidebar-chat/index.tsx:21`）。 */
 export declare const SUBAGENT_CHAT_ADDRESS = "dsh-resource://subagentchat/session/";

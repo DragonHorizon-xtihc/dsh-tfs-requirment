@@ -4,7 +4,7 @@
  * 负责：领取需求、拆解任务、指派角色、状态机校验、DAG 依赖求解、FIFO 并发排队（S-06）。
  * 不依赖宿主 API，纯逻辑；宿主侧经 `persistence/json-store` 落盘。
  *
- * @module dsh-tfs-requirment/core/board/board
+ * @module @deepseek-ai/dsh-tfs-requirment/core/board/board
  */
 import type { Requirement, RequirementExecState, RequirementOrchestration } from '../../tfs/types.js';
 import { type TaskOrchestration, type TaskSnapshot, type TaskState } from './task.js';

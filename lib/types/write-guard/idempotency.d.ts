@@ -6,7 +6,7 @@
  *
  * 纯函数，不依赖宿主；哈希用确定性规范序列化 + FNV-1a，保证跨进程一致。
  *
- * @module dsh-tfs-requirment/write-guard/idempotency
+ * @module @deepseek-ai/dsh-tfs-requirment/write-guard/idempotency
  */
 import type { WriteOpType } from '../tfs/types.js';
 /** 标签归一化：去首尾空白、折叠内部空白、转小写（用于幂等比较）。 */

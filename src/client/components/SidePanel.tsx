@@ -35,7 +35,7 @@
  * 协议里 `'guide'` 是本包自留的 kind（`client.js` 的 `GUIDE_KIND = "guide"`），
  * 复用它会撞上已注册的 `builtin` 而抛错，故本插件自带 kind `TFS_EXEC_KIND`。
  *
- * @module dsh-tfs-requirment/client/components/SidePanel
+ * @module @deepseek-ai/dsh-tfs-requirment/client/components/SidePanel
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -63,7 +63,7 @@ import type {
 export const TFS_EXEC_KIND = 'tfs-requirment-exec'
 
 /** 页类型在注册表里的身份，同时是它在本槽注册用的 key。 */
-export const TFS_EXEC_TAB_ID = 'dsh-tfs-requirment#exec'
+export const TFS_EXEC_TAB_ID = '@deepseek-ai/dsh-tfs-requirment#exec'
 
 /** 页签名（宿主在 chip 与浮动面板标题上渲染它）。 */
 export const TFS_EXEC_TITLE = 'TFS 执行'

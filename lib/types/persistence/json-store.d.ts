@@ -6,7 +6,7 @@
  * - 解析失败**保留原文件、抛错**，不静默重建（FR-020 / T062）；
  * - 可选 version 乐观锁（落盘前后版本校验，崩溃保留 S-09）。
  *
- * @module dsh-tfs-requirment/persistence/json-store
+ * @module @deepseek-ai/dsh-tfs-requirment/persistence/json-store
  */
 import { type FsLike } from './fs-like.js';
 /** 解析失败错误（原文件保留）。 */

@@ -1,7 +1,7 @@
 /**
  * 执行链路态（区别于看板四态，执行内部使用）。
  *
- * @module dsh-tfs-requirment/core/board/exec-state
+ * @module @deepseek-ai/dsh-tfs-requirment/core/board/exec-state
  */
 /**
  * 执行链路态：排队 → 运行 → 成功/失败/取消/待人工确认。

@@ -11,7 +11,7 @@
  * 门禁 3 的判重依据就是审计里的幂等键，若在写入之前记账，一次超时 / 412 / 5xx 也会把键
  * 标成"已应用"，重试随即被门禁 3 拒掉——一次**从未发生**的写入会被报成"幂等跳过"。
  *
- * @module dsh-tfs-requirment/write-guard
+ * @module @deepseek-ai/dsh-tfs-requirment/write-guard
  */
 import type { WriteOp } from '../tfs/types.js';
 import { AuditLog } from './audit.js';

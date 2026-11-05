@@ -25,7 +25,7 @@
  * - `getCredential()` 仅在 `restConfig()` 与导出用凭据文件这两条路径上被调用；
  * - `delete()` 走 `ProfileStore` 的随机字节覆写（S-12）。
  *
- * @module dsh-tfs-requirment/host/profile-service
+ * @module @deepseek-ai/dsh-tfs-requirment/host/profile-service
  */
 import { ProfileStore } from '../profile/store.js';
 import { type FsLike } from '../persistence/fs-like.js';
@@ -34,9 +34,9 @@ import type { EnvFileResult, McpEnvTemplate, McpInstanceInfo, ProfileOpResult, P
 export declare const ENV_FILE_NAME = "tfs-credentials.env";
 /** 导出文件里的变量名。 */
 export declare const TFS_ENV_KEYS: {
-    readonly url: "TFS_URL";
-    readonly collection: "TFS_COLLECTION";
-    readonly pat: "TFS_PAT";
+    readonly url: 'TFS_URL';
+    readonly collection: 'TFS_COLLECTION';
+    readonly pat: 'TFS_PAT';
 };
 /** 依赖。 */
 export interface ProfileServiceDeps {

@@ -4,7 +4,7 @@
  * 四态 `pending/in_progress/completed/deleted` + `blockedBy[]` DAG + `revision` 乐观锁。
  * 状态机转换集中在此文件，供 board 引擎统一校验（US3 T045）。
  *
- * @module dsh-tfs-requirment/core/board/task
+ * @module @deepseek-ai/dsh-tfs-requirment/core/board/task
  */
 
 import type { ExecState } from './exec-state.js'

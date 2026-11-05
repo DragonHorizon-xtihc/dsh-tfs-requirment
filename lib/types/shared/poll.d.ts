@@ -12,7 +12,7 @@
  * - 仅当可见字段真的变化时才算 `updated`（用 `changedDate` 之外还比对状态/指派/标题/标签，
  *   因为部分 TFS 部署返回的 `changedDate` 精度只到秒、或同一秒内多次改动）。
  *
- * @module dsh-tfs-requirment/shared/poll
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/poll
  */
 import type { RequirementSummary } from './contracts.js';
 /** 需求去重键（S-01）：`id@collection`。 */

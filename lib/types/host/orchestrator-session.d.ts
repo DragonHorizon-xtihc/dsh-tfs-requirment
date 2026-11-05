@@ -28,7 +28,7 @@
  * "这条需求没有 AI 归纳"，任务链路**照常跑完**（归纳退化为无摘要、总结退化为既有模板）。
  * 状态与原因落 `board.json` 的 `requirement.orchestration`，面板如实展示，不静默。
  *
- * @module dsh-tfs-requirment/host/orchestrator-session
+ * @module @deepseek-ai/dsh-tfs-requirment/host/orchestrator-session
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';

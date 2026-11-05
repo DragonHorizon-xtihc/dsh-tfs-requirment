@@ -31,14 +31,14 @@
  * 4. 角色端口无写能力（测试/降级装配）→ 回落列表第一个角色；
  * 5. 一个角色都没有 → undefined（decompose 以「通用工程师」名称占位）。
  *
- * @module dsh-tfs-requirment/orchestration/role-match
+ * @module @deepseek-ai/dsh-tfs-requirment/orchestration/role-match
  */
 import type { RoleDefinition } from '../shared/contracts.js';
 /**
  * 五段式拆解阶段（与 decompose.ts 的 `#analyze/#plan/#impl/#review/#verify` 任务 id 对齐）。
  * 顺序即 DAG 依赖顺序：分析 → 架构师拆解 → 开发 → 代码审核 → 测试。
  */
-export declare const DECOMPOSE_STAGES: readonly ["analyze", "plan", "impl", "review", "verify"];
+export declare const DECOMPOSE_STAGES: readonly ['analyze', 'plan', 'impl', 'review', 'verify'];
 /** 拆解阶段。 */
 export type DecomposeStage = (typeof DECOMPOSE_STAGES)[number];
 /** 通用兜底角色 id（与内置模板 ROLE_GENERAL 一致）。 */

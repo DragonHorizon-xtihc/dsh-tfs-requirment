@@ -26,7 +26,7 @@
  * 关键点：`url` 里 `/_apis/` **之前**的部分正好是「地址 + 集合」，因此**不需要**
  * 新增任何宿主路由或 TFS 调用即可算出网页地址。
  *
- * @module dsh-tfs-requirment/shared/workitem-url
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/workitem-url
  */
 /** 构造工作项网页地址的入参。 */
 export interface WorkItemLinkInput {

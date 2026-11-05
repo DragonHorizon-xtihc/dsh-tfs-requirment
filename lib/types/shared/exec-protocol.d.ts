@@ -11,7 +11,7 @@
  * 3. **关键产物清单**（问题 4）：子智能体在结尾用 `ARTIFACTS:` 段给出要归档的文件绝对路径，
  *    由 {@link parseArtifactPaths} 解析后上传为需求附件。
  *
- * @module dsh-tfs-requirment/shared/exec-protocol
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/exec-protocol
  */
 /** 收口判定的三态：成功 / 失败 / 待人工确认（问题 5）。 */
 export type ExecOutcome = 'success' | 'failed' | 'needs_confirmation';
@@ -48,6 +48,48 @@ export declare function findConfirmPhrase(output: string): {
  * @param stopReason - 子 run 落定原因。
  * @param output - 子智能体最终输出文本（已抽取/截断均可）。
  */
+/**
+ * 输出里是否有「任务已实质交付」的证据（2026-11-04）。
+ *
+ * ## 为什么要引入这一维
+ *
+ * 协议第 6 条让子智能体只要报告里存在"必须人工确认后才能继续的事项"就输出
+ * `NEEDS_HUMAN_CONFIRM`。真实工程任务几乎总有这类遗留项（真机桌面端补测、TFS
+ * 状态流转、写门禁确认），于是模型在**已经交付完整报告与产物**后仍会输出该标记。
+ * 旧判据见标记就判 `needs_confirmation`，任务停在「待确认」，自动扫尾反复续跑，
+ * 最终主 agent 兜底无产出时把任务收口成 `failed` —— 表现为「所有子 Agent 完成后
+ * 都被标记失败」（真机 2059017：7 次 attempt 里 3 次 needs_confirmation、
+ * 1 次 sweep-main-agent-empty，只有人工确认才落 success）。
+ *
+ * 因此区分两种语义：
+ *   - **有交付证据**（TASK_DONE 独占一行，或 ARTIFACTS 段里有真实绝对路径）⇒
+ *     任务已经干完，末尾的确认请求只是**非阻塞遗留项**，按 `success` 收口并写进备注；
+ *   - **无交付证据、纯粹在等人拍板** ⇒ 才是真正的 `needs_confirmation`。
+ *
+ * 判据刻意保守：只认协议里两个"我交付了"的强信号，不靠长度或标题猜。
+ *
+ * @param output - 子智能体最终输出文本。
+ */
+export declare function hasDeliveredArtifacts(output: string | undefined): boolean;
+/** 收口评估结果：三态之外，附带「已交付但有非阻塞遗留项」的备注。 */
+export interface OutcomeAssessment {
+    /** 本次收口判定。 */
+    outcome: ExecOutcome;
+    /** 任务已交付、但输出标注了需人工补做的遗留项；无遗留项时为 undefined。 */
+    deferredNote?: string;
+}
+/**
+ * 评估一次子 run 的收口结果（在 {@link detectOutcome} 的三态之上补充遗留项备注）。
+ *
+ * 口径：
+ *   - stopReason ≠ 'completed' → `failed`；
+ *   - completed + 请求人工确认 + **有交付证据** → `success` + `deferredNote`
+ *     （任务已完成，遗留项不阻塞，写进备注供人查看）；
+ *   - completed + 请求人工确认 + 无交付证据 → `needs_confirmation`（真的卡住等人）；
+ *   - 其余 completed → `success`。
+ */
+export declare function assessOutcome(stopReason: string | undefined, output: string | undefined): OutcomeAssessment;
+/** 判定一次子 run 的收口结果（{@link assessOutcome} 的三态视图）。 */
 export declare function detectOutcome(stopReason: string | undefined, output: string | undefined): ExecOutcome;
 /**
  * 抽取"需要人工确认的具体内容"，用于任务备注与 UI 展示。

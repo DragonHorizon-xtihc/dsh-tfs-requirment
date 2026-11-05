@@ -14,7 +14,7 @@
  * API 形状对齐 React `useSyncExternalStore`：`subscribe` / `getSnapshot`，
  * 客户端半直接 `useSyncExternalStore(control.subscribe, control.getSnapshot)`。
  *
- * @module dsh-tfs-requirment/shared/panel-open-control
+ * @module @deepseek-ai/dsh-tfs-requirment/shared/panel-open-control
  */
 export class PanelOpenControl {
   private open = false

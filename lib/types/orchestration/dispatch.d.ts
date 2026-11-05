@@ -26,7 +26,7 @@
  * 本模块仅依赖已核实的宿主类型（@deepseek-ai/dsh-subagent / dsh-llm / dsh-agent），
  * 不直接 import cordis，便于在宿主接线层注入 `ctx.subagents`。
  *
- * @module dsh-tfs-requirment/orchestration/dispatch
+ * @module @deepseek-ai/dsh-tfs-requirment/orchestration/dispatch
  */
 import type { SubagentStartRequest, SubagentRun } from '@deepseek-ai/dsh-subagent';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';

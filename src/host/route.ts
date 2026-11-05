@@ -11,7 +11,7 @@
  *  - 用 `guardedWebServer` 给每条路由套鉴权栅栏（未鉴权 401/403，门禁不可用 503）；
  *  - 用 `ctx.inject(['webServer'], ...)` 惰性注册，宿主无 web 服务时插件仍可加载（仅无按钮端点）。
  *
- * @module dsh-tfs-requirment/host/route
+ * @module @deepseek-ai/dsh-tfs-requirment/host/route
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'

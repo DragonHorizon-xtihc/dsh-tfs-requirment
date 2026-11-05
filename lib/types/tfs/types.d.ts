@@ -4,7 +4,7 @@
  * 这些类型由 `tfs/adapter.ts` 在归一化 TFS REST 响应前后使用；业务层不直接依赖 TFS REST 形态。
  * 字段名以 `sampling.ts`（T013）在目标项目实测为准，本文件先给最小可用骨架。
  *
- * @module dsh-tfs-requirment/tfs/types
+ * @module @deepseek-ai/dsh-tfs-requirment/tfs/types
  */
 import type { OrchestrationMode, RequirementBrief, RequirementWriteBackReport, WriteOp, WriteOpType } from '../shared/contracts.js';
 /** 编排模式与共享简报类型在此再导出，下游不必再从 contracts 单独取。 */

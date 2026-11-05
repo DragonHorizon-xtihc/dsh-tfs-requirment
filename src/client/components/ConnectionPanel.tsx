@@ -13,7 +13,7 @@
 // - a11y（T065 最低要求）：所有输入有 `label` 关联、按钮有明确文本、状态区 `role="status"`、
 //   环境模板用 `<pre>` 保留格式并配可聚焦的复制按钮。
 //
-// @module dsh-tfs-requirment/client/components/ConnectionPanel
+// @module @deepseek-ai/dsh-tfs-requirment/client/components/ConnectionPanel
 
 import { useMemo, useState } from 'react'
 import type {
